@@ -1,0 +1,15 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "composite": false,
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "outDir": "./dist",
+    "paths": {
+      "@shared/*": ["../shared/src/*"],
+      "@retail-hub/shared": ["../shared/src/index.ts"]
+    }
+  },
+  "include": ["src/**/*", "../shared/src/**/*"],
+  "exclude": ["node_modules", "dist"]
+}

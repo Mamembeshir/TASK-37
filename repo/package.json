@@ -1,0 +1,30 @@
+{
+  "name": "retail-operation-hub",
+  "version": "1.0.0",
+  "private": true,
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=10.0.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["bcrypt", "esbuild"]
+  },
+  "scripts": {
+    "dev:backend": "pnpm --filter backend dev",
+    "dev:frontend": "pnpm --filter frontend dev",
+    "build:shared": "pnpm --filter shared build",
+    "build:backend": "pnpm --filter backend build",
+    "build:frontend": "pnpm --filter frontend build",
+    "build": "pnpm run build:shared && pnpm run build:backend && pnpm run build:frontend",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck",
+    "test": "vitest --workspace vitest.workspace.ts",
+    "test:ci": "vitest run --workspace vitest.workspace.ts",
+    "test:coverage": "vitest run --workspace vitest.workspace.ts --coverage",
+    "test:ui": "vitest --workspace vitest.workspace.ts --ui"
+  },
+  "devDependencies": {
+    "vitest": "^2.1.0",
+    "@vitest/ui": "^2.1.0"
+  }
+}

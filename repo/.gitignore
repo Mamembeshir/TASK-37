@@ -1,0 +1,41 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Build output
+dist/
+**/dist/
+build/
+**/build/
+
+# TypeScript
+*.tsbuildinfo
+**/*.tsbuildinfo
+
+# Environment files — never commit secrets
+.env
+.env.local
+.env.*.local
+**/.env
+**/.env.local
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Angular
+frontend/.angular/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Uploads / local file storage
+backend/uploads/

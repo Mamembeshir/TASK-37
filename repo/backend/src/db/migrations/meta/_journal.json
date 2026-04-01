@@ -1,0 +1,62 @@
+{
+  "version": "6",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1775033074583,
+      "tag": "0000_skinny_stature",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1775034729771,
+      "tag": "0001_slim_cable",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1775035000000,
+      "tag": "0002_widen_phone_for_encryption",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1775035100000,
+      "tag": "0003_add_sort_order_to_products",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1775035200000,
+      "tag": "0004_add_pickup_code_index",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1775035300000,
+      "tag": "0005_add_customer_points_tier",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1775035400000,
+      "tag": "0006_audit_logs_immutability",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1775035500000,
+      "tag": "0007_add_product_search_vector",
+      "breakpoints": true
+    }
+  ]
+}
