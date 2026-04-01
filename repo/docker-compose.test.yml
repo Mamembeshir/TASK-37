@@ -1,0 +1,28 @@
+services:
+  postgres-test:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: retail_hub_test
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: changeme
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d retail_hub_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    tmpfs:
+      - /var/lib/postgresql/data   # ephemeral — wiped on each run
+
+  test-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    depends_on:
+      postgres-test:
+        condition: service_healthy
+    environment:
+      DATABASE_TEST_URL: postgresql://postgres:changeme@postgres-test:5432/retail_hub_test
+      SESSION_SECRET: test_session_secret_replace_in_prod_min32chars
+      ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
+      UPLOAD_DIR: /tmp/retail_hub_test_uploads
+      MAX_IMAGE_SIZE_BYTES: "5242880"

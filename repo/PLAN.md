@@ -544,3 +544,12 @@
 - [x] src/routes/notifications.test.ts (13) — integration tests for notification routes:
     - GET /notifications: 401, 200 empty, 200 own unread, read notifications excluded, other user's excluded, correct shape (id/customerId/message/entityType/entityId/isRead/createdAt), staff can access own
     - PUT /notifications/:id/read: 401, 404 missing, 403 other user's, 200 isRead=true+correct shape, idempotent on already-read, GET excludes it after marking read
+
+---
+
+## Docker Test Infrastructure
+
+- [x] `Dockerfile.test` — node:20-alpine image with build tools (python3/make/g++ for bcrypt), pnpm@10, all workspace deps installed, root tsconfig.json copied so backend/tsconfig.json extends it correctly
+- [x] `docker-compose.test.yml` — ephemeral postgres-test service (tmpfs data, retail_hub_test DB) + test-runner service with all env vars; healthcheck gates test-runner start
+- [x] `run_tests.sh` — builds image, runs `pnpm --filter backend test:ci && pnpm --filter frontend test:ci` sequentially (avoids vitest workspace concurrency racing clearAllTables vs seeds), tears down on exit
+- [x] Verified: 518 backend + 434 frontend = **952 tests, all green** via `bash run_tests.sh`

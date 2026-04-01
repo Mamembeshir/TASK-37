@@ -1,0 +1,32 @@
+FROM node:20-alpine
+
+# Native modules (bcrypt) need build tools
+RUN apk add --no-cache python3 make g++
+
+# Install pnpm (pinned to match workspace)
+RUN npm install -g pnpm@10
+
+WORKDIR /app
+
+# Copy manifests first for layer caching
+COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
+COPY backend/package.json  ./backend/
+COPY frontend/package.json ./frontend/
+COPY shared/package.json   ./shared/
+
+RUN pnpm install --frozen-lockfile
+
+# Copy full source (root tsconfig.json must be present — backend extends it)
+COPY tsconfig.json       ./
+COPY vitest.workspace.ts ./
+COPY backend/  ./backend/
+COPY frontend/ ./frontend/
+COPY shared/   ./shared/
+
+# Directory used by backend tests for image uploads
+RUN mkdir -p /tmp/retail_hub_test_uploads
+
+# Run backend (needs DB) then frontend (jsdom only) sequentially.
+# Workspace mode runs both pools concurrently, which causes clearAllTables()
+# in one backend test file's beforeEach to race against another file's seeds.
+CMD ["sh", "-c", "pnpm --filter backend test:ci && pnpm --filter frontend test:ci"]
