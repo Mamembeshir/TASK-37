@@ -12,6 +12,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { testDb, runMigrations, clearAllTables, closeDb } from '../../test/db.js';
 import { buildAdminRulesTestApp } from '../../test/app.js';
+import { inject } from '../../test/client.js';
 import { seedUser, seedRule, seedRuleHistory, MINIMAL_RULE_DEF } from '../../test/helpers.js';
 import { rules, rulesHistory } from '../../db/schema/rules.js';
 import { auditLogs } from '../../db/schema/audit-logs.js';
@@ -20,8 +21,8 @@ import type { RuleDefinition } from '@retail-hub/shared';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-async function loginAs(app: FastifyInstance, username: string, password = 'password1234'): Promise<string> {
-  const res = await app.inject({
+async function loginAs(username: string, password = 'password1234'): Promise<string> {
+  const res = await inject(url, {
     method: 'POST',
     url: '/auth/login',
     payload: { username, password },
@@ -46,10 +47,11 @@ const INVALID_DEF = {
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
 
 let app: FastifyInstance;
+let url: string;
 
 beforeAll(async () => {
   await runMigrations();
-  app = await buildAdminRulesTestApp();
+  ({ app, url } = await buildAdminRulesTestApp());
 });
 
 afterAll(async () => {
@@ -62,15 +64,15 @@ afterAll(async () => {
 
 describe('GET /admin/rules', () => {
   it('returns 401 when not authenticated', async () => {
-    const res = await app.inject({ method: 'GET', url: '/admin/rules' });
+    const res = await inject(url, { method: 'GET', url: '/admin/rules' });
     expect(res.statusCode).toBe(401);
   });
 
   it('returns 403 for non-admin roles', async () => {
     for (const role of ['customer', 'associate', 'supervisor', 'manager'] as const) {
       const user = await seedUser({ role });
-      const auth = await loginAs(app, user.username);
-      const res = await app.inject({
+      const auth = await loginAs(user.username);
+      const res = await inject(url, {
         method: 'GET',
         url: '/admin/rules',
         headers: { authorization: auth },
@@ -82,9 +84,9 @@ describe('GET /admin/rules', () => {
   it('returns paginated rules list for admin (200)', async () => {
     const admin = await seedUser({ role: 'admin' });
     await seedRule({ createdBy: admin.id });
-    const auth = await loginAs(app, admin.username);
+    const auth = await loginAs(admin.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'GET',
       url: '/admin/rules',
       headers: { authorization: auth },
@@ -101,9 +103,9 @@ describe('GET /admin/rules', () => {
     const admin = await seedUser({ role: 'admin' });
     await seedRule({ createdBy: admin.id });
     await seedRule({ createdBy: admin.id });
-    const auth = await loginAs(app, admin.username);
+    const auth = await loginAs(admin.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'GET',
       url: '/admin/rules?limit=1&offset=0',
       headers: { authorization: auth },
@@ -115,9 +117,9 @@ describe('GET /admin/rules', () => {
   it('list items do not include definitionJson (summary only)', async () => {
     const admin = await seedUser({ role: 'admin' });
     await seedRule({ createdBy: admin.id });
-    const auth = await loginAs(app, admin.username);
+    const auth = await loginAs(admin.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'GET',
       url: '/admin/rules',
       headers: { authorization: auth },
@@ -134,15 +136,15 @@ describe('GET /admin/rules', () => {
 
 describe('GET /admin/rules/:id', () => {
   it('returns 401 when not authenticated', async () => {
-    const res = await app.inject({ method: 'GET', url: '/admin/rules/00000000-0000-0000-0000-000000000001' });
+    const res = await inject(url, { method: 'GET', url: '/admin/rules/00000000-0000-0000-0000-000000000001' });
     expect(res.statusCode).toBe(401);
   });
 
   it('returns 403 for non-admin', async () => {
     const associate = await seedUser({ role: 'associate' });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'GET',
       url: '/admin/rules/00000000-0000-0000-0000-000000000001',
       headers: { authorization: auth },
@@ -152,9 +154,9 @@ describe('GET /admin/rules/:id', () => {
 
   it('returns 404 when rule does not exist', async () => {
     const admin = await seedUser({ role: 'admin' });
-    const auth = await loginAs(app, admin.username);
+    const auth = await loginAs(admin.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'GET',
       url: '/admin/rules/00000000-0000-0000-0000-000000000002',
       headers: { authorization: auth },
@@ -165,9 +167,9 @@ describe('GET /admin/rules/:id', () => {
   it('returns rule detail with definitionJson (200)', async () => {
     const admin = await seedUser({ role: 'admin' });
     const rule = await seedRule({ definitionJson: VALID_DEF, createdBy: admin.id });
-    const auth = await loginAs(app, admin.username);
+    const auth = await loginAs(admin.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'GET',
       url: `/admin/rules/${rule.id}`,
       headers: { authorization: auth },
@@ -181,9 +183,9 @@ describe('GET /admin/rules/:id', () => {
 
   it('returns 400 for non-UUID param', async () => {
     const admin = await seedUser({ role: 'admin' });
-    const auth = await loginAs(app, admin.username);
+    const auth = await loginAs(admin.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'GET',
       url: '/admin/rules/not-a-uuid',
       headers: { authorization: auth },
@@ -196,7 +198,7 @@ describe('GET /admin/rules/:id', () => {
 
 describe('POST /admin/rules', () => {
   it('returns 401 when not authenticated', async () => {
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: '/admin/rules',
       payload: { name: 'x', adminComment: 'y', definitionJson: VALID_DEF },
@@ -206,9 +208,9 @@ describe('POST /admin/rules', () => {
 
   it('returns 403 for non-admin', async () => {
     const user = await seedUser({ role: 'supervisor' });
-    const auth = await loginAs(app, user.username);
+    const auth = await loginAs(user.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: '/admin/rules',
       headers: { authorization: auth },
@@ -219,9 +221,9 @@ describe('POST /admin/rules', () => {
 
   it('returns 400 when adminComment is missing', async () => {
     const admin = await seedUser({ role: 'admin' });
-    const auth = await loginAs(app, admin.username);
+    const auth = await loginAs(admin.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: '/admin/rules',
       headers: { authorization: auth },
@@ -232,9 +234,9 @@ describe('POST /admin/rules', () => {
 
   it('returns 400 when definitionJson is invalid', async () => {
     const admin = await seedUser({ role: 'admin' });
-    const auth = await loginAs(app, admin.username);
+    const auth = await loginAs(admin.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: '/admin/rules',
       headers: { authorization: auth },
@@ -245,10 +247,10 @@ describe('POST /admin/rules', () => {
 
   it('creates rule as draft (201) with version=1', async () => {
     const admin = await seedUser({ role: 'admin' });
-    const auth = await loginAs(app, admin.username);
+    const auth = await loginAs(admin.username);
     const ruleName = `new_rule_${Date.now()}`;
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: '/admin/rules',
       headers: { authorization: auth },
@@ -266,12 +268,12 @@ describe('POST /admin/rules', () => {
 
   it('returns 409 when a rule with the same name already exists', async () => {
     const admin = await seedUser({ role: 'admin' });
-    const auth = await loginAs(app, admin.username);
+    const auth = await loginAs(admin.username);
     const existingName = `dup_rule_${Date.now()}`;
 
     await seedRule({ name: existingName, createdBy: admin.id });
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: '/admin/rules',
       headers: { authorization: auth },
@@ -286,7 +288,7 @@ describe('POST /admin/rules', () => {
 
 describe('PUT /admin/rules/:id', () => {
   it('returns 401 when not authenticated', async () => {
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'PUT',
       url: '/admin/rules/00000000-0000-0000-0000-000000000001',
       payload: { adminComment: 'update' },
@@ -296,9 +298,9 @@ describe('PUT /admin/rules/:id', () => {
 
   it('returns 404 when rule does not exist', async () => {
     const admin = await seedUser({ role: 'admin' });
-    const auth = await loginAs(app, admin.username);
+    const auth = await loginAs(admin.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'PUT',
       url: '/admin/rules/00000000-0000-0000-0000-000000000003',
       headers: { authorization: auth },
@@ -310,9 +312,9 @@ describe('PUT /admin/rules/:id', () => {
   it('increments version on update (200)', async () => {
     const admin = await seedUser({ role: 'admin' });
     const rule = await seedRule({ version: 1, createdBy: admin.id });
-    const auth = await loginAs(app, admin.username);
+    const auth = await loginAs(admin.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'PUT',
       url: `/admin/rules/${rule.id}`,
       headers: { authorization: auth },
@@ -325,9 +327,9 @@ describe('PUT /admin/rules/:id', () => {
   it('snapshots previous version into rules_history', async () => {
     const admin = await seedUser({ role: 'admin' });
     const rule = await seedRule({ version: 1, createdBy: admin.id });
-    const auth = await loginAs(app, admin.username);
+    const auth = await loginAs(admin.username);
 
-    await app.inject({
+    await inject(url, {
       method: 'PUT',
       url: `/admin/rules/${rule.id}`,
       headers: { authorization: auth },
@@ -345,9 +347,9 @@ describe('PUT /admin/rules/:id', () => {
   it('demotes active rule back to draft on update', async () => {
     const admin = await seedUser({ role: 'admin' });
     const rule = await seedRule({ status: 'active', createdBy: admin.id });
-    const auth = await loginAs(app, admin.username);
+    const auth = await loginAs(admin.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'PUT',
       url: `/admin/rules/${rule.id}`,
       headers: { authorization: auth },
@@ -361,9 +363,9 @@ describe('PUT /admin/rules/:id', () => {
     const admin = await seedUser({ role: 'admin' });
     const existing = await seedRule({ name: `taken_${Date.now()}`, createdBy: admin.id });
     const rule = await seedRule({ createdBy: admin.id });
-    const auth = await loginAs(app, admin.username);
+    const auth = await loginAs(admin.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'PUT',
       url: `/admin/rules/${rule.id}`,
       headers: { authorization: auth },
@@ -375,9 +377,9 @@ describe('PUT /admin/rules/:id', () => {
   it('returns 400 when adminComment is missing', async () => {
     const admin = await seedUser({ role: 'admin' });
     const rule = await seedRule({ createdBy: admin.id });
-    const auth = await loginAs(app, admin.username);
+    const auth = await loginAs(admin.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'PUT',
       url: `/admin/rules/${rule.id}`,
       headers: { authorization: auth },
@@ -391,15 +393,15 @@ describe('PUT /admin/rules/:id', () => {
 
 describe('POST /admin/rules/:id/publish', () => {
   it('returns 401 when not authenticated', async () => {
-    const res = await app.inject({ method: 'POST', url: '/admin/rules/00000000-0000-0000-0000-000000000001/publish' });
+    const res = await inject(url, { method: 'POST', url: '/admin/rules/00000000-0000-0000-0000-000000000001/publish' });
     expect(res.statusCode).toBe(401);
   });
 
   it('returns 404 when rule does not exist', async () => {
     const admin = await seedUser({ role: 'admin' });
-    const auth = await loginAs(app, admin.username);
+    const auth = await loginAs(admin.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: '/admin/rules/00000000-0000-0000-0000-000000000004/publish',
       headers: { authorization: auth },
@@ -410,9 +412,9 @@ describe('POST /admin/rules/:id/publish', () => {
   it('returns 409 when rule is already active', async () => {
     const admin = await seedUser({ role: 'admin' });
     const rule = await seedRule({ status: 'active', createdBy: admin.id });
-    const auth = await loginAs(app, admin.username);
+    const auth = await loginAs(admin.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/admin/rules/${rule.id}/publish`,
       headers: { authorization: auth },
@@ -424,9 +426,9 @@ describe('POST /admin/rules/:id/publish', () => {
   it('sets status=active and publishedAt (200)', async () => {
     const admin = await seedUser({ role: 'admin' });
     const rule = await seedRule({ status: 'draft', createdBy: admin.id });
-    const auth = await loginAs(app, admin.username);
+    const auth = await loginAs(admin.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/admin/rules/${rule.id}/publish`,
       headers: { authorization: auth },
@@ -441,9 +443,9 @@ describe('POST /admin/rules/:id/publish', () => {
   it('can publish a rolled_back rule (re-activating it)', async () => {
     const admin = await seedUser({ role: 'admin' });
     const rule = await seedRule({ status: 'rolled_back', createdBy: admin.id });
-    const auth = await loginAs(app, admin.username);
+    const auth = await loginAs(admin.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/admin/rules/${rule.id}/publish`,
       headers: { authorization: auth },
@@ -457,7 +459,7 @@ describe('POST /admin/rules/:id/publish', () => {
 
 describe('POST /admin/rules/:id/rollback', () => {
   it('returns 401 when not authenticated', async () => {
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: '/admin/rules/00000000-0000-0000-0000-000000000001/rollback',
       payload: { adminComment: 'rollback' },
@@ -467,9 +469,9 @@ describe('POST /admin/rules/:id/rollback', () => {
 
   it('returns 403 for non-admin', async () => {
     const supervisor = await seedUser({ role: 'supervisor' });
-    const auth = await loginAs(app, supervisor.username);
+    const auth = await loginAs(supervisor.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: '/admin/rules/00000000-0000-0000-0000-000000000001/rollback',
       headers: { authorization: auth },
@@ -480,9 +482,9 @@ describe('POST /admin/rules/:id/rollback', () => {
 
   it('returns 404 when rule does not exist', async () => {
     const admin = await seedUser({ role: 'admin' });
-    const auth = await loginAs(app, admin.username);
+    const auth = await loginAs(admin.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: '/admin/rules/00000000-0000-0000-0000-000000000005/rollback',
       headers: { authorization: auth },
@@ -494,9 +496,9 @@ describe('POST /admin/rules/:id/rollback', () => {
   it('returns 409 when no history exists to roll back to', async () => {
     const admin = await seedUser({ role: 'admin' });
     const rule = await seedRule({ status: 'active', createdBy: admin.id });
-    const auth = await loginAs(app, admin.username);
+    const auth = await loginAs(admin.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/admin/rules/${rule.id}/rollback`,
       headers: { authorization: auth },
@@ -517,9 +519,9 @@ describe('POST /admin/rules/:id/rollback', () => {
     // Plant a history row (simulating a previous published version)
     await seedRuleHistory({ ruleId: rule.id, version: 1, status: 'active', definitionJson: previousDef, createdBy: admin.id });
 
-    const auth = await loginAs(app, admin.username);
+    const auth = await loginAs(admin.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/admin/rules/${rule.id}/rollback`,
       headers: { authorization: auth },
@@ -539,14 +541,14 @@ describe('POST /admin/rules/:id/rollback', () => {
     const rule = await seedRule({ version: 2, status: 'active', createdBy: admin.id });
     await seedRuleHistory({ ruleId: rule.id, version: 1, status: 'active', createdBy: admin.id });
 
-    const auth = await loginAs(app, admin.username);
+    const auth = await loginAs(admin.username);
 
     const histBefore = await testDb
       .select()
       .from(rulesHistory)
       .where(eq(rulesHistory.ruleId, rule.id));
 
-    await app.inject({
+    await inject(url, {
       method: 'POST',
       url: `/admin/rules/${rule.id}/rollback`,
       headers: { authorization: auth },
@@ -570,9 +572,9 @@ describe('POST /admin/rules/:id/rollback', () => {
     const rule = await seedRule({ version: 2, status: 'active', createdBy: admin.id });
     await seedRuleHistory({ ruleId: rule.id, version: 1, status: 'active', createdBy: admin.id });
 
-    const auth = await loginAs(app, admin.username);
+    const auth = await loginAs(admin.username);
 
-    await app.inject({
+    await inject(url, {
       method: 'POST',
       url: `/admin/rules/${rule.id}/rollback`,
       headers: { authorization: auth },
@@ -593,9 +595,9 @@ describe('POST /admin/rules/:id/rollback', () => {
   it('returns 400 when adminComment is missing for rollback', async () => {
     const admin = await seedUser({ role: 'admin' });
     const rule = await seedRule({ createdBy: admin.id });
-    const auth = await loginAs(app, admin.username);
+    const auth = await loginAs(admin.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/admin/rules/${rule.id}/rollback`,
       headers: { authorization: auth },

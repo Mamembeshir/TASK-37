@@ -16,6 +16,7 @@ import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { testDb, runMigrations, clearAllTables, closeDb } from '../test/db.js';
 import { buildTicketTestApp, buildAssociateTestApp } from '../test/app.js';
+import { inject } from '../test/client.js';
 import {
   seedUser,
   seedOrder,
@@ -32,8 +33,8 @@ import type { FastifyInstance } from 'fastify';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-async function loginAs(app: FastifyInstance, username: string, password = 'password1234'): Promise<string> {
-  const res = await app.inject({
+async function loginAs(username: string, password = 'password1234'): Promise<string> {
+  const res = await inject(url, {
     method: 'POST',
     url: '/auth/login',
     payload: { username, password },
@@ -44,10 +45,11 @@ async function loginAs(app: FastifyInstance, username: string, password = 'passw
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
 
 let app: FastifyInstance;
+let url: string;
 
 beforeAll(async () => {
   await runMigrations();
-  app = await buildTicketTestApp();
+  ({ app, url } = await buildTicketTestApp());
 });
 
 afterAll(async () => {
@@ -60,7 +62,7 @@ afterAll(async () => {
 
 describe('POST /tickets', () => {
   it('returns 401 when not authenticated', async () => {
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: '/tickets',
       payload: { orderId: randomUUID(), type: 'return' },
@@ -72,9 +74,9 @@ describe('POST /tickets', () => {
     const associate = await seedUser({ role: 'associate' });
     const customer = await seedUser({ role: 'customer' });
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: '/tickets',
       headers: { authorization: auth },
@@ -85,9 +87,9 @@ describe('POST /tickets', () => {
 
   it('returns 404 when order does not exist', async () => {
     const customer = await seedUser({ role: 'customer' });
-    const auth = await loginAs(app, customer.username);
+    const auth = await loginAs(customer.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: '/tickets',
       headers: { authorization: auth },
@@ -100,9 +102,9 @@ describe('POST /tickets', () => {
     const owner = await seedUser({ role: 'customer' });
     const other = await seedUser({ role: 'customer' });
     const order = await seedOrder({ customerId: owner.id, status: 'picked_up' });
-    const auth = await loginAs(app, other.username);
+    const auth = await loginAs(other.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: '/tickets',
       headers: { authorization: auth },
@@ -114,9 +116,9 @@ describe('POST /tickets', () => {
   it('returns 409 when order is not picked_up', async () => {
     const customer = await seedUser({ role: 'customer' });
     const order = await seedOrder({ customerId: customer.id, status: 'confirmed' });
-    const auth = await loginAs(app, customer.username);
+    const auth = await loginAs(customer.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: '/tickets',
       headers: { authorization: auth },
@@ -129,9 +131,9 @@ describe('POST /tickets', () => {
   it('returns 400 when price_adjustment is missing receiptReference', async () => {
     const customer = await seedUser({ role: 'customer' });
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
-    const auth = await loginAs(app, customer.username);
+    const auth = await loginAs(customer.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: '/tickets',
       headers: { authorization: auth },
@@ -144,9 +146,9 @@ describe('POST /tickets', () => {
     const customer = await seedUser({ role: 'customer' });
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
     await seedTicket({ orderId: order.id, customerId: customer.id, type: 'return', status: 'open' });
-    const auth = await loginAs(app, customer.username);
+    const auth = await loginAs(customer.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: '/tickets',
       headers: { authorization: auth },
@@ -159,9 +161,9 @@ describe('POST /tickets', () => {
   it('creates return ticket routed to fulfillment (201)', async () => {
     const customer = await seedUser({ role: 'customer' });
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
-    const auth = await loginAs(app, customer.username);
+    const auth = await loginAs(customer.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: '/tickets',
       headers: { authorization: auth },
@@ -180,9 +182,9 @@ describe('POST /tickets', () => {
   it('creates refund ticket routed to accounting (201)', async () => {
     const customer = await seedUser({ role: 'customer' });
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
-    const auth = await loginAs(app, customer.username);
+    const auth = await loginAs(customer.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: '/tickets',
       headers: { authorization: auth },
@@ -195,9 +197,9 @@ describe('POST /tickets', () => {
   it('creates price_adjustment ticket routed to front_desk with receiptReference (201)', async () => {
     const customer = await seedUser({ role: 'customer' });
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
-    const auth = await loginAs(app, customer.username);
+    const auth = await loginAs(customer.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: '/tickets',
       headers: { authorization: auth },
@@ -212,9 +214,9 @@ describe('POST /tickets', () => {
   it('writes an audit log on ticket creation', async () => {
     const customer = await seedUser({ role: 'customer' });
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
-    const auth = await loginAs(app, customer.username);
+    const auth = await loginAs(customer.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: '/tickets',
       headers: { authorization: auth },
@@ -237,14 +239,14 @@ describe('POST /tickets', () => {
 
 describe('GET /tickets', () => {
   it('returns 401 when not authenticated', async () => {
-    const res = await app.inject({ method: 'GET', url: '/tickets' });
+    const res = await inject(url, { method: 'GET', url: '/tickets' });
     expect(res.statusCode).toBe(401);
   });
 
   it('returns 403 for non-customer roles', async () => {
     const associate = await seedUser({ role: 'associate' });
-    const auth = await loginAs(app, associate.username);
-    const res = await app.inject({
+    const auth = await loginAs(associate.username);
+    const res = await inject(url, {
       method: 'GET',
       url: '/tickets',
       headers: { authorization: auth },
@@ -259,9 +261,9 @@ describe('GET /tickets', () => {
     const otherOrder = await seedOrder({ customerId: other.id, status: 'picked_up' });
     await seedTicket({ orderId: order.id, customerId: customer.id, type: 'return' });
     await seedTicket({ orderId: otherOrder.id, customerId: other.id, type: 'refund' });
-    const auth = await loginAs(app, customer.username);
+    const auth = await loginAs(customer.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'GET',
       url: '/tickets',
       headers: { authorization: auth },
@@ -279,9 +281,9 @@ describe('GET /tickets', () => {
     const order2 = await seedOrder({ customerId: customer.id, status: 'picked_up' });
     await seedTicket({ orderId: order1.id, customerId: customer.id, type: 'return' });
     await seedTicket({ orderId: order2.id, customerId: customer.id, type: 'refund' });
-    const auth = await loginAs(app, customer.username);
+    const auth = await loginAs(customer.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'GET',
       url: '/tickets?limit=1&offset=0',
       headers: { authorization: auth },
@@ -299,14 +301,14 @@ describe('GET /tickets', () => {
 
 describe('GET /tickets/:id', () => {
   it('returns 401 when not authenticated', async () => {
-    const res = await app.inject({ method: 'GET', url: '/tickets/00000000-0000-0000-0000-000000000001' });
+    const res = await inject(url, { method: 'GET', url: '/tickets/00000000-0000-0000-0000-000000000001' });
     expect(res.statusCode).toBe(401);
   });
 
   it('returns 404 when ticket does not exist', async () => {
     const customer = await seedUser({ role: 'customer' });
-    const auth = await loginAs(app, customer.username);
-    const res = await app.inject({
+    const auth = await loginAs(customer.username);
+    const res = await inject(url, {
       method: 'GET',
       url: '/tickets/00000000-0000-0000-0000-000000000002',
       headers: { authorization: auth },
@@ -319,9 +321,9 @@ describe('GET /tickets/:id', () => {
     const other = await seedUser({ role: 'customer' });
     const order = await seedOrder({ customerId: owner.id, status: 'picked_up' });
     const ticket = await seedTicket({ orderId: order.id, customerId: owner.id });
-    const auth = await loginAs(app, other.username);
+    const auth = await loginAs(other.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'GET',
       url: `/tickets/${ticket.id}`,
       headers: { authorization: auth },
@@ -333,9 +335,9 @@ describe('GET /tickets/:id', () => {
     const customer = await seedUser({ role: 'customer' });
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
     const ticket = await seedTicket({ orderId: order.id, customerId: customer.id });
-    const auth = await loginAs(app, customer.username);
+    const auth = await loginAs(customer.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'GET',
       url: `/tickets/${ticket.id}`,
       headers: { authorization: auth },
@@ -352,9 +354,9 @@ describe('GET /tickets/:id', () => {
     const associate = await seedUser({ role: 'associate' });
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
     const ticket = await seedTicket({ orderId: order.id, customerId: customer.id });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'GET',
       url: `/tickets/${ticket.id}`,
       headers: { authorization: auth },
@@ -369,9 +371,9 @@ describe('GET /tickets/:id', () => {
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
     const ticket = await seedTicket({ orderId: order.id, customerId: customer.id });
     await seedTicketEvent({ ticketId: ticket.id, actorId: associate.id, eventType: 'checked_in', note: 'Sensitive note' });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'GET',
       url: `/tickets/${ticket.id}`,
       headers: { authorization: auth },
@@ -387,7 +389,7 @@ describe('GET /tickets/:id', () => {
 
 describe('POST /tickets/:id/checkin', () => {
   it('returns 401 when not authenticated', async () => {
-    const res = await app.inject({ method: 'POST', url: '/tickets/00000000-0000-0000-0000-000000000001/checkin', payload: {} });
+    const res = await inject(url, { method: 'POST', url: '/tickets/00000000-0000-0000-0000-000000000001/checkin', payload: {} });
     expect(res.statusCode).toBe(401);
   });
 
@@ -395,9 +397,9 @@ describe('POST /tickets/:id/checkin', () => {
     const customer = await seedUser({ role: 'customer' });
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
     const ticket = await seedTicket({ orderId: order.id, customerId: customer.id });
-    const auth = await loginAs(app, customer.username);
+    const auth = await loginAs(customer.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/tickets/${ticket.id}/checkin`,
       headers: { authorization: auth },
@@ -408,9 +410,9 @@ describe('POST /tickets/:id/checkin', () => {
 
   it('returns 404 when ticket does not exist', async () => {
     const associate = await seedUser({ role: 'associate' });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: '/tickets/00000000-0000-0000-0000-000000000003/checkin',
       headers: { authorization: auth },
@@ -424,9 +426,9 @@ describe('POST /tickets/:id/checkin', () => {
     const associate = await seedUser({ role: 'associate' });
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
     const ticket = await seedTicket({ orderId: order.id, customerId: customer.id, status: 'in_progress' });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/tickets/${ticket.id}/checkin`,
       headers: { authorization: auth },
@@ -441,9 +443,9 @@ describe('POST /tickets/:id/checkin', () => {
     const associate = await seedUser({ role: 'associate' });
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
     const ticket = await seedTicket({ orderId: order.id, customerId: customer.id });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/tickets/${ticket.id}/checkin`,
       headers: { authorization: auth },
@@ -477,7 +479,7 @@ describe('POST /tickets/:id/checkin', () => {
 
 describe('POST /tickets/:id/triage', () => {
   it('returns 401 when not authenticated', async () => {
-    const res = await app.inject({ method: 'POST', url: '/tickets/00000000-0000-0000-0000-000000000001/triage', payload: {} });
+    const res = await inject(url, { method: 'POST', url: '/tickets/00000000-0000-0000-0000-000000000001/triage', payload: {} });
     expect(res.statusCode).toBe(401);
   });
 
@@ -485,9 +487,9 @@ describe('POST /tickets/:id/triage', () => {
     const customer = await seedUser({ role: 'customer' });
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
     const ticket = await seedTicket({ orderId: order.id, customerId: customer.id, status: 'in_progress' });
-    const auth = await loginAs(app, customer.username);
+    const auth = await loginAs(customer.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/tickets/${ticket.id}/triage`,
       headers: { authorization: auth },
@@ -501,9 +503,9 @@ describe('POST /tickets/:id/triage', () => {
     const associate = await seedUser({ role: 'associate' });
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
     const ticket = await seedTicket({ orderId: order.id, customerId: customer.id, status: 'open' });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/tickets/${ticket.id}/triage`,
       headers: { authorization: auth },
@@ -518,9 +520,9 @@ describe('POST /tickets/:id/triage', () => {
     const associate = await seedUser({ role: 'associate' });
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
     const ticket = await seedTicket({ orderId: order.id, customerId: customer.id, type: 'return', status: 'in_progress', department: 'front_desk' });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/tickets/${ticket.id}/triage`,
       headers: { authorization: auth },
@@ -535,9 +537,9 @@ describe('POST /tickets/:id/triage', () => {
     const associate = await seedUser({ role: 'associate' });
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
     const ticket = await seedTicket({ orderId: order.id, customerId: customer.id, type: 'refund', status: 'in_progress', department: 'accounting' });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/tickets/${ticket.id}/triage`,
       headers: { authorization: auth },
@@ -552,9 +554,9 @@ describe('POST /tickets/:id/triage', () => {
     const associate = await seedUser({ role: 'associate' });
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
     const ticket = await seedTicket({ orderId: order.id, customerId: customer.id, type: 'return', status: 'in_progress', department: 'front_desk' });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
-    await app.inject({
+    await inject(url, {
       method: 'POST',
       url: `/tickets/${ticket.id}/triage`,
       headers: { authorization: auth },
@@ -580,9 +582,9 @@ describe('POST /tickets/:id/reassign', () => {
     const associate = await seedUser({ role: 'associate' });
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
     const ticket = await seedTicket({ orderId: order.id, customerId: customer.id, status: 'in_progress' });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/tickets/${ticket.id}/reassign`,
       headers: { authorization: auth },
@@ -596,9 +598,9 @@ describe('POST /tickets/:id/reassign', () => {
     const supervisor = await seedUser({ role: 'supervisor' });
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
     const ticket = await seedTicket({ orderId: order.id, customerId: customer.id, status: 'resolved', outcome: 'approved' });
-    const auth = await loginAs(app, supervisor.username);
+    const auth = await loginAs(supervisor.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/tickets/${ticket.id}/reassign`,
       headers: { authorization: auth },
@@ -613,9 +615,9 @@ describe('POST /tickets/:id/reassign', () => {
     const supervisor = await seedUser({ role: 'supervisor' });
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
     const ticket = await seedTicket({ orderId: order.id, customerId: customer.id, department: 'fulfillment', status: 'open' });
-    const auth = await loginAs(app, supervisor.username);
+    const auth = await loginAs(supervisor.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/tickets/${ticket.id}/reassign`,
       headers: { authorization: auth },
@@ -631,9 +633,9 @@ describe('POST /tickets/:id/reassign', () => {
     const associate = await seedUser({ role: 'associate' });
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
     const ticket = await seedTicket({ orderId: order.id, customerId: customer.id, department: 'fulfillment', status: 'in_progress', assignedTo: associate.id });
-    const auth = await loginAs(app, supervisor.username);
+    const auth = await loginAs(supervisor.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/tickets/${ticket.id}/reassign`,
       headers: { authorization: auth },
@@ -662,9 +664,9 @@ describe('POST /tickets/:id/interrupt', () => {
     const customer = await seedUser({ role: 'customer' });
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
     const ticket = await seedTicket({ orderId: order.id, customerId: customer.id, status: 'in_progress' });
-    const auth = await loginAs(app, customer.username);
+    const auth = await loginAs(customer.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/tickets/${ticket.id}/interrupt`,
       headers: { authorization: auth },
@@ -678,9 +680,9 @@ describe('POST /tickets/:id/interrupt', () => {
     const associate = await seedUser({ role: 'associate' });
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
     const ticket = await seedTicket({ orderId: order.id, customerId: customer.id, status: 'open' });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/tickets/${ticket.id}/interrupt`,
       headers: { authorization: auth },
@@ -694,9 +696,9 @@ describe('POST /tickets/:id/interrupt', () => {
     const associate = await seedUser({ role: 'associate' });
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
     const ticket = await seedTicket({ orderId: order.id, customerId: customer.id, status: 'in_progress' });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/tickets/${ticket.id}/interrupt`,
       headers: { authorization: auth },
@@ -726,9 +728,9 @@ describe('POST /tickets/:id/resolve', () => {
     const customer = await seedUser({ role: 'customer' });
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
     const ticket = await seedTicket({ orderId: order.id, customerId: customer.id, status: 'in_progress' });
-    const auth = await loginAs(app, customer.username);
+    const auth = await loginAs(customer.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/tickets/${ticket.id}/resolve`,
       headers: { authorization: auth },
@@ -742,9 +744,9 @@ describe('POST /tickets/:id/resolve', () => {
     const associate = await seedUser({ role: 'associate' });
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
     const ticket = await seedTicket({ orderId: order.id, customerId: customer.id, status: 'open' });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/tickets/${ticket.id}/resolve`,
       headers: { authorization: auth },
@@ -758,9 +760,9 @@ describe('POST /tickets/:id/resolve', () => {
     const associate = await seedUser({ role: 'associate' });
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
     const ticket = await seedTicket({ orderId: order.id, customerId: customer.id, status: 'in_progress' });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/tickets/${ticket.id}/resolve`,
       headers: { authorization: auth },
@@ -774,9 +776,9 @@ describe('POST /tickets/:id/resolve', () => {
     const associate = await seedUser({ role: 'associate' });
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
     const ticket = await seedTicket({ orderId: order.id, customerId: customer.id, status: 'in_progress' });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/tickets/${ticket.id}/resolve`,
       headers: { authorization: auth },
@@ -794,9 +796,9 @@ describe('POST /tickets/:id/resolve', () => {
     const associate = await seedUser({ role: 'associate' });
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
     const ticket = await seedTicket({ orderId: order.id, customerId: customer.id, status: 'pending_inspection' });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/tickets/${ticket.id}/resolve`,
       headers: { authorization: auth },
@@ -811,9 +813,9 @@ describe('POST /tickets/:id/resolve', () => {
     const associate = await seedUser({ role: 'associate' });
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
     const ticket = await seedTicket({ orderId: order.id, customerId: customer.id, status: 'in_progress' });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
-    await app.inject({
+    await inject(url, {
       method: 'POST',
       url: `/tickets/${ticket.id}/resolve`,
       headers: { authorization: auth },
@@ -868,9 +870,9 @@ describe('POST /tickets/:id/resolve', () => {
       createdBy: admin.id,
     });
 
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/tickets/${ticket.id}/resolve`,
       headers: { authorization: auth },
@@ -885,14 +887,14 @@ describe('POST /tickets/:id/resolve', () => {
 
 describe('GET /tickets/:id/timeline', () => {
   it('returns 401 when not authenticated', async () => {
-    const res = await app.inject({ method: 'GET', url: '/tickets/00000000-0000-0000-0000-000000000001/timeline' });
+    const res = await inject(url, { method: 'GET', url: '/tickets/00000000-0000-0000-0000-000000000001/timeline' });
     expect(res.statusCode).toBe(401);
   });
 
   it('returns 404 when ticket does not exist', async () => {
     const customer = await seedUser({ role: 'customer' });
-    const auth = await loginAs(app, customer.username);
-    const res = await app.inject({
+    const auth = await loginAs(customer.username);
+    const res = await inject(url, {
       method: 'GET',
       url: '/tickets/00000000-0000-0000-0000-000000000004/timeline',
       headers: { authorization: auth },
@@ -905,9 +907,9 @@ describe('GET /tickets/:id/timeline', () => {
     const other = await seedUser({ role: 'customer' });
     const order = await seedOrder({ customerId: owner.id, status: 'picked_up' });
     const ticket = await seedTicket({ orderId: order.id, customerId: owner.id });
-    const auth = await loginAs(app, other.username);
+    const auth = await loginAs(other.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'GET',
       url: `/tickets/${ticket.id}/timeline`,
       headers: { authorization: auth },
@@ -919,9 +921,9 @@ describe('GET /tickets/:id/timeline', () => {
     const customer = await seedUser({ role: 'customer' });
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
     const ticket = await seedTicket({ orderId: order.id, customerId: customer.id });
-    const auth = await loginAs(app, customer.username);
+    const auth = await loginAs(customer.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'GET',
       url: `/tickets/${ticket.id}/timeline`,
       headers: { authorization: auth },
@@ -937,9 +939,9 @@ describe('GET /tickets/:id/timeline', () => {
     const ticket = await seedTicket({ orderId: order.id, customerId: customer.id, status: 'in_progress' });
     await seedTicketEvent({ ticketId: ticket.id, actorId: associate.id, eventType: 'checked_in' });
     await seedTicketEvent({ ticketId: ticket.id, actorId: associate.id, eventType: 'triaged', nodeDurationMs: 5000 });
-    const auth = await loginAs(app, customer.username);
+    const auth = await loginAs(customer.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'GET',
       url: `/tickets/${ticket.id}/timeline`,
       headers: { authorization: auth },
@@ -969,10 +971,10 @@ describe('GET /tickets/:id/timeline', () => {
     const associate = await seedUser({ role: 'associate' });
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
     const ticket = await seedTicket({ orderId: order.id, customerId: customer.id });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
     // Checkin via API (creates first event)
-    await app.inject({
+    await inject(url, {
       method: 'POST',
       url: `/tickets/${ticket.id}/checkin`,
       headers: { authorization: auth },
@@ -980,14 +982,14 @@ describe('GET /tickets/:id/timeline', () => {
     });
 
     // Triage via API (creates second event with nodeDurationMs)
-    await app.inject({
+    await inject(url, {
       method: 'POST',
       url: `/tickets/${ticket.id}/triage`,
       headers: { authorization: auth },
       payload: {},
     });
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'GET',
       url: `/tickets/${ticket.id}/timeline`,
       headers: { authorization: auth },
@@ -1004,9 +1006,9 @@ describe('GET /tickets/:id/timeline', () => {
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
     const ticket = await seedTicket({ orderId: order.id, customerId: customer.id });
     await seedTicketEvent({ ticketId: ticket.id, actorId: associate.id, eventType: 'checked_in' });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'GET',
       url: `/tickets/${ticket.id}/timeline`,
       headers: { authorization: auth },

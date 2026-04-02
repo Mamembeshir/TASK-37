@@ -6,13 +6,14 @@
  * (no background jobs, no CORS, no multipart, etc.).
  *
  * Usage:
- *   const app = await buildAuthTestApp();
- *   const res = await app.inject({ method: 'POST', url: '/auth/login', ... });
+ *   const { app, url } = await buildAuthTestApp();
+ *   const res = await inject(url, { method: 'POST', url: '/auth/login', ... });
  *   await app.close();
  */
 
 import Fastify from 'fastify';
 import type { FastifyInstance } from 'fastify';
+import type { AddressInfo } from 'net';
 import { ZodTypeProvider } from 'fastify-type-provider-zod';
 import multipart from '@fastify/multipart';
 import zodValidator from '../plugins/zod-validator.js';
@@ -42,7 +43,7 @@ declare module 'fastify' {
  */
 export async function buildAuthTestApp(
   configureExtra?: (app: FastifyInstance) => Promise<void>,
-): Promise<FastifyInstance> {
+): Promise<{ app: FastifyInstance; url: string }> {
   const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
 
   // Decorate with the test DB instance before any plugin that reads fastify.db.
@@ -58,14 +59,16 @@ export async function buildAuthTestApp(
   }
 
   await app.ready();
-  return app;
+  await app.listen({ port: 0, host: '127.0.0.1' });
+  const { port } = app.server.address() as AddressInfo;
+  return { app, url: `http://127.0.0.1:${port}` };
 }
 
 /**
  * Build a test app with only the public product catalog routes.
  * No auth required — matches the SPEC (kiosk catalog browsing is public).
  */
-export async function buildProductTestApp(): Promise<FastifyInstance> {
+export async function buildProductTestApp(): Promise<{ app: FastifyInstance; url: string }> {
   const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
 
   app.decorate('db', testDb as unknown as typeof db);
@@ -75,7 +78,9 @@ export async function buildProductTestApp(): Promise<FastifyInstance> {
   await app.register(productRoutes, { prefix: '/products' });
 
   await app.ready();
-  return app;
+  await app.listen({ port: 0, host: '127.0.0.1' });
+  const { port } = app.server.address() as AddressInfo;
+  return { app, url: `http://127.0.0.1:${port}` };
 }
 
 /**
@@ -83,7 +88,7 @@ export async function buildProductTestApp(): Promise<FastifyInstance> {
  * All cart endpoints require authentication, so auth routes are included
  * to allow tests to log in and obtain a session cookie.
  */
-export async function buildCartTestApp(): Promise<FastifyInstance> {
+export async function buildCartTestApp(): Promise<{ app: FastifyInstance; url: string }> {
   const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
 
   app.decorate('db', testDb as unknown as typeof db);
@@ -95,7 +100,9 @@ export async function buildCartTestApp(): Promise<FastifyInstance> {
   await app.register(cartRoutes, { prefix: '/cart' });
 
   await app.ready();
-  return app;
+  await app.listen({ port: 0, host: '127.0.0.1' });
+  const { port } = app.server.address() as AddressInfo;
+  return { app, url: `http://127.0.0.1:${port}` };
 }
 
 /**
@@ -103,7 +110,7 @@ export async function buildCartTestApp(): Promise<FastifyInstance> {
  * Cart state is set up directly via the test DB for speed.
  * Auth routes are included so tests can log in as customer or staff.
  */
-export async function buildOrderTestApp(): Promise<FastifyInstance> {
+export async function buildOrderTestApp(): Promise<{ app: FastifyInstance; url: string }> {
   const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
 
   app.decorate('db', testDb as unknown as typeof db);
@@ -115,14 +122,16 @@ export async function buildOrderTestApp(): Promise<FastifyInstance> {
   await app.register(orderRoutes, { prefix: '/orders' });
 
   await app.ready();
-  return app;
+  await app.listen({ port: 0, host: '127.0.0.1' });
+  const { port } = app.server.address() as AddressInfo;
+  return { app, url: `http://127.0.0.1:${port}` };
 }
 
 /**
  * Build a test app with auth + review routes (multipart enabled).
  * POST /reviews uses multipart/form-data so @fastify/multipart must be registered.
  */
-export async function buildReviewTestApp(): Promise<FastifyInstance> {
+export async function buildReviewTestApp(): Promise<{ app: FastifyInstance; url: string }> {
   const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
 
   app.decorate('db', testDb as unknown as typeof db);
@@ -135,13 +144,15 @@ export async function buildReviewTestApp(): Promise<FastifyInstance> {
   await app.register(reviewRoutes, { prefix: '/reviews' });
 
   await app.ready();
-  return app;
+  await app.listen({ port: 0, host: '127.0.0.1' });
+  const { port } = app.server.address() as AddressInfo;
+  return { app, url: `http://127.0.0.1:${port}` };
 }
 
 /**
  * Build a test app with auth + moderation routes.
  */
-export async function buildModerationTestApp(): Promise<FastifyInstance> {
+export async function buildModerationTestApp(): Promise<{ app: FastifyInstance; url: string }> {
   const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
 
   app.decorate('db', testDb as unknown as typeof db);
@@ -153,14 +164,16 @@ export async function buildModerationTestApp(): Promise<FastifyInstance> {
   await app.register(moderationRoutes, { prefix: '/moderation' });
 
   await app.ready();
-  return app;
+  await app.listen({ port: 0, host: '127.0.0.1' });
+  const { port } = app.server.address() as AddressInfo;
+  return { app, url: `http://127.0.0.1:${port}` };
 }
 
 /**
  * Build a test app with auth + admin rules routes.
  * Auth: admin role only.
  */
-export async function buildAdminRulesTestApp(): Promise<FastifyInstance> {
+export async function buildAdminRulesTestApp(): Promise<{ app: FastifyInstance; url: string }> {
   const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
 
   app.decorate('db', testDb as unknown as typeof db);
@@ -172,7 +185,9 @@ export async function buildAdminRulesTestApp(): Promise<FastifyInstance> {
   await app.register(adminRulesRoutes, { prefix: '/admin/rules' });
 
   await app.ready();
-  return app;
+  await app.listen({ port: 0, host: '127.0.0.1' });
+  const { port } = app.server.address() as AddressInfo;
+  return { app, url: `http://127.0.0.1:${port}` };
 }
 
 import ticketRoutes from '../routes/tickets.js';
@@ -183,7 +198,7 @@ import notificationRoutes from '../routes/notifications.js';
  * Build a test app with auth + ticket routes + notification routes.
  * Customers open tickets; staff act on them.
  */
-export async function buildTicketTestApp(): Promise<FastifyInstance> {
+export async function buildTicketTestApp(): Promise<{ app: FastifyInstance; url: string }> {
   const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
 
   app.decorate('db', testDb as unknown as typeof db);
@@ -196,13 +211,15 @@ export async function buildTicketTestApp(): Promise<FastifyInstance> {
   await app.register(notificationRoutes, { prefix: '/notifications' });
 
   await app.ready();
-  return app;
+  await app.listen({ port: 0, host: '127.0.0.1' });
+  const { port } = app.server.address() as AddressInfo;
+  return { app, url: `http://127.0.0.1:${port}` };
 }
 
 /**
  * Build a test app with auth + associate queue + ticket lifecycle routes.
  */
-export async function buildAssociateTestApp(): Promise<FastifyInstance> {
+export async function buildAssociateTestApp(): Promise<{ app: FastifyInstance; url: string }> {
   const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
 
   app.decorate('db', testDb as unknown as typeof db);
@@ -215,5 +232,7 @@ export async function buildAssociateTestApp(): Promise<FastifyInstance> {
   await app.register(ticketRoutes, { prefix: '/tickets' });
 
   await app.ready();
-  return app;
+  await app.listen({ port: 0, host: '127.0.0.1' });
+  const { port } = app.server.address() as AddressInfo;
+  return { app, url: `http://127.0.0.1:${port}` };
 }

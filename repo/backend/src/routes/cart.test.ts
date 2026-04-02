@@ -15,6 +15,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { eq } from 'drizzle-orm';
 import { buildCartTestApp } from '../test/app.js';
+import { inject } from '../test/client.js';
 import { testDb, runMigrations, clearAllTables, closeDb } from '../test/db.js';
 import { seedUser, seedProduct } from '../test/helpers.js';
 import { runExpireCartsJob } from '../jobs/expire-carts.js';
@@ -26,11 +27,10 @@ import { auditLogs } from '../db/schema/audit-logs.js';
 
 /** Log in and return an Authorization header value (e.g. "Bearer abc123"). */
 async function loginAs(
-  app: FastifyInstance,
   username: string,
   password = 'password1234',
 ): Promise<string> {
-  const res = await app.inject({
+  const res = await inject(url, {
     method: 'POST',
     url: '/auth/login',
     payload: { username, password },
@@ -41,16 +41,16 @@ async function loginAs(
   return `Bearer ${token}`;
 }
 
-async function createCart(app: FastifyInstance, auth: string) {
-  return app.inject({
+async function createCart(auth: string) {
+  return inject(url, {
     method: 'POST',
     url: '/cart',
     headers: auth ? { authorization: auth } : {},
   });
 }
 
-async function getCart(app: FastifyInstance, auth: string) {
-  return app.inject({
+async function getCart(auth: string) {
+  return inject(url, {
     method: 'GET',
     url: '/cart',
     headers: auth ? { authorization: auth } : {},
@@ -58,12 +58,11 @@ async function getCart(app: FastifyInstance, auth: string) {
 }
 
 async function addItem(
-  app: FastifyInstance,
   auth: string,
   productId: string,
   qty: number,
 ) {
-  return app.inject({
+  return inject(url, {
     method: 'POST',
     url: '/cart/items',
     headers: auth ? { authorization: auth } : {},
@@ -72,12 +71,11 @@ async function addItem(
 }
 
 async function updateItem(
-  app: FastifyInstance,
   auth: string,
   itemId: string,
   qty: number,
 ) {
-  return app.inject({
+  return inject(url, {
     method: 'PUT',
     url: `/cart/items/${itemId}`,
     headers: auth ? { authorization: auth } : {},
@@ -85,8 +83,8 @@ async function updateItem(
   });
 }
 
-async function deleteItem(app: FastifyInstance, auth: string, itemId: string) {
-  return app.inject({
+async function deleteItem(auth: string, itemId: string) {
+  return inject(url, {
     method: 'DELETE',
     url: `/cart/items/${itemId}`,
     headers: auth ? { authorization: auth } : {},
@@ -105,10 +103,11 @@ async function expireCart(cartId: string) {
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
 
 let app: FastifyInstance;
+let url: string;
 
 beforeAll(async () => {
   await runMigrations();
-  app = await buildCartTestApp();
+  ({ app, url } = await buildCartTestApp());
 });
 
 beforeEach(async () => {
@@ -125,9 +124,9 @@ afterAll(async () => {
 describe('POST /cart', () => {
   it('201: creates a cart and returns correct shape', async () => {
     const user = await seedUser();
-    const cookie = await loginAs(app, user.username);
+    const cookie = await loginAs(user.username);
 
-    const res = await createCart(app, cookie);
+    const res = await createCart(cookie);
 
     expect(res.statusCode).toBe(201);
     const body = res.json();
@@ -143,10 +142,10 @@ describe('POST /cart', () => {
 
   it('201: expiresAt is approximately 30 minutes from now', async () => {
     const user = await seedUser();
-    const cookie = await loginAs(app, user.username);
+    const cookie = await loginAs(user.username);
 
     const before = Date.now();
-    const res = await createCart(app, cookie);
+    const res = await createCart(cookie);
     const after = Date.now();
 
     const expiresAt = new Date(res.json().expiresAt).getTime();
@@ -158,16 +157,16 @@ describe('POST /cart', () => {
   });
 
   it('401: requires authentication', async () => {
-    const res = await createCart(app, '');
+    const res = await createCart('');
     expect(res.statusCode).toBe(401);
   });
 
   it('409: returns 409 if customer already has an active cart', async () => {
     const user = await seedUser();
-    const cookie = await loginAs(app, user.username);
+    const cookie = await loginAs(user.username);
 
-    await createCart(app, cookie);
-    const res2 = await createCart(app, cookie);
+    await createCart(cookie);
+    const res2 = await createCart(cookie);
 
     expect(res2.statusCode).toBe(409);
     expect(res2.json().error).toMatch(/already have an active cart/i);
@@ -176,11 +175,11 @@ describe('POST /cart', () => {
   it('409: different customers can each have their own active cart', async () => {
     const u1 = await seedUser({ username: 'buyer1' });
     const u2 = await seedUser({ username: 'buyer2' });
-    const c1 = await loginAs(app, u1.username);
-    const c2 = await loginAs(app, u2.username);
+    const c1 = await loginAs(u1.username);
+    const c2 = await loginAs(u2.username);
 
-    const r1 = await createCart(app, c1);
-    const r2 = await createCart(app, c2);
+    const r1 = await createCart(c1);
+    const r2 = await createCart(c2);
 
     expect(r1.statusCode).toBe(201);
     expect(r2.statusCode).toBe(201);
@@ -191,24 +190,24 @@ describe('POST /cart', () => {
 
 describe('GET /cart', () => {
   it('401: requires authentication', async () => {
-    const res = await getCart(app, '');
+    const res = await getCart('');
     expect(res.statusCode).toBe(401);
   });
 
   it('404: no active cart', async () => {
     const user = await seedUser();
-    const cookie = await loginAs(app, user.username);
+    const cookie = await loginAs(user.username);
 
-    const res = await getCart(app, cookie);
+    const res = await getCart(cookie);
     expect(res.statusCode).toBe(404);
   });
 
   it('200: returns cart with empty items and positive secondsRemaining', async () => {
     const user = await seedUser();
-    const cookie = await loginAs(app, user.username);
-    await createCart(app, cookie);
+    const cookie = await loginAs(user.username);
+    await createCart(cookie);
 
-    const res = await getCart(app, cookie);
+    const res = await getCart(cookie);
 
     expect(res.statusCode).toBe(200);
     const body = res.json();
@@ -220,12 +219,12 @@ describe('GET /cart', () => {
 
   it('200: returns items with productName and price', async () => {
     const user = await seedUser();
-    const cookie = await loginAs(app, user.username);
-    await createCart(app, cookie);
+    const cookie = await loginAs(user.username);
+    await createCart(cookie);
     const product = await seedProduct({ name: 'Blue Widget', price: '29.99', stockQty: 10 });
-    await addItem(app, cookie, product.id, 3);
+    await addItem(cookie, product.id, 3);
 
-    const res = await getCart(app, cookie);
+    const res = await getCart(cookie);
 
     expect(res.statusCode).toBe(200);
     const body = res.json();
@@ -242,15 +241,15 @@ describe('GET /cart', () => {
 
   it('200: secondsRemaining is 0 when expiresAt is in the past (status still active in DB)', async () => {
     const user = await seedUser();
-    const cookie = await loginAs(app, user.username);
-    const cartRes = await createCart(app, cookie);
+    const cookie = await loginAs(user.username);
+    const cartRes = await createCart(cookie);
     const cartId = cartRes.json().id;
 
     await expireCart(cartId);
 
     // GET /cart returns the cart as-is (the job hasn't run yet to flip status)
     // The cart is still 'active' in DB but expiresAt is past — secondsRemaining = 0
-    const res = await getCart(app, cookie);
+    const res = await getCart(cookie);
     expect(res.statusCode).toBe(200);
     expect(res.json().secondsRemaining).toBe(0);
   });
@@ -261,27 +260,27 @@ describe('GET /cart', () => {
 describe('POST /cart/items', () => {
   it('401: requires authentication', async () => {
     const product = await seedProduct();
-    const res = await addItem(app, '', product.id, 1);
+    const res = await addItem('', product.id, 1);
     expect(res.statusCode).toBe(401);
   });
 
   it('404: no active cart', async () => {
     const user = await seedUser();
-    const cookie = await loginAs(app, user.username);
+    const cookie = await loginAs(user.username);
     const product = await seedProduct();
 
-    const res = await addItem(app, cookie, product.id, 1);
+    const res = await addItem(cookie, product.id, 1);
     expect(res.statusCode).toBe(404);
     expect(res.json().error).toMatch(/no active cart/i);
   });
 
   it('201: adds item and decrements stock', async () => {
     const user = await seedUser();
-    const cookie = await loginAs(app, user.username);
-    await createCart(app, cookie);
+    const cookie = await loginAs(user.username);
+    await createCart(cookie);
     const product = await seedProduct({ stockQty: 10 });
 
-    const res = await addItem(app, cookie, product.id, 3);
+    const res = await addItem(cookie, product.id, 3);
 
     expect(res.statusCode).toBe(201);
     const body = res.json();
@@ -299,12 +298,12 @@ describe('POST /cart/items', () => {
 
   it('409: product already in cart', async () => {
     const user = await seedUser();
-    const cookie = await loginAs(app, user.username);
-    await createCart(app, cookie);
+    const cookie = await loginAs(user.username);
+    await createCart(cookie);
     const product = await seedProduct({ stockQty: 20 });
 
-    await addItem(app, cookie, product.id, 1);
-    const res = await addItem(app, cookie, product.id, 1);
+    await addItem(cookie, product.id, 1);
+    const res = await addItem(cookie, product.id, 1);
 
     expect(res.statusCode).toBe(409);
     expect(res.json().error).toMatch(/already in your cart/i);
@@ -312,22 +311,22 @@ describe('POST /cart/items', () => {
 
   it('409: insufficient stock', async () => {
     const user = await seedUser();
-    const cookie = await loginAs(app, user.username);
-    await createCart(app, cookie);
+    const cookie = await loginAs(user.username);
+    await createCart(cookie);
     const product = await seedProduct({ stockQty: 2 });
 
-    const res = await addItem(app, cookie, product.id, 5);
+    const res = await addItem(cookie, product.id, 5);
     expect(res.statusCode).toBe(409);
     expect(res.json().error).toMatch(/insufficient stock/i);
   });
 
   it('409: stock is not decremented on insufficient stock', async () => {
     const user = await seedUser();
-    const cookie = await loginAs(app, user.username);
-    await createCart(app, cookie);
+    const cookie = await loginAs(user.username);
+    await createCart(cookie);
     const product = await seedProduct({ stockQty: 2 });
 
-    await addItem(app, cookie, product.id, 5);
+    await addItem(cookie, product.id, 5);
 
     const [row] = await testDb
       .select({ stockQty: products.stockQty })
@@ -338,23 +337,23 @@ describe('POST /cart/items', () => {
 
   it('409: inactive product', async () => {
     const user = await seedUser();
-    const cookie = await loginAs(app, user.username);
-    await createCart(app, cookie);
+    const cookie = await loginAs(user.username);
+    await createCart(cookie);
     const product = await seedProduct({ stockQty: 10, isActive: false });
 
-    const res = await addItem(app, cookie, product.id, 1);
+    const res = await addItem(cookie, product.id, 1);
     expect(res.statusCode).toBe(409);
   });
 
   it('410: cart expired in DB (expiresAt in past)', async () => {
     const user = await seedUser();
-    const cookie = await loginAs(app, user.username);
-    const cartRes = await createCart(app, cookie);
+    const cookie = await loginAs(user.username);
+    const cartRes = await createCart(cookie);
     const cartId = cartRes.json().id;
     await expireCart(cartId);
 
     const product = await seedProduct({ stockQty: 10 });
-    const res = await addItem(app, cookie, product.id, 1);
+    const res = await addItem(cookie, product.id, 1);
 
     expect(res.statusCode).toBe(410);
     expect(res.json().error).toMatch(/expired/i);
@@ -362,11 +361,11 @@ describe('POST /cart/items', () => {
 
   it('400: qty must be at least 1', async () => {
     const user = await seedUser();
-    const cookie = await loginAs(app, user.username);
-    await createCart(app, cookie);
+    const cookie = await loginAs(user.username);
+    await createCart(cookie);
     const product = await seedProduct();
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: '/cart/items',
       headers: { authorization: cookie },
@@ -377,10 +376,10 @@ describe('POST /cart/items', () => {
 
   it('400: productId must be a UUID', async () => {
     const user = await seedUser();
-    const cookie = await loginAs(app, user.username);
-    await createCart(app, cookie);
+    const cookie = await loginAs(user.username);
+    await createCart(cookie);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: '/cart/items',
       headers: { authorization: cookie },
@@ -395,29 +394,29 @@ describe('POST /cart/items', () => {
 describe('PUT /cart/items/:id', () => {
   it('401: requires authentication', async () => {
     const fakeId = '00000000-0000-0000-0000-000000000001';
-    const res = await updateItem(app, '', fakeId, 2);
+    const res = await updateItem('', fakeId, 2);
     expect(res.statusCode).toBe(401);
   });
 
   it('404: item not found', async () => {
     const user = await seedUser();
-    const cookie = await loginAs(app, user.username);
+    const cookie = await loginAs(user.username);
     const fakeId = '00000000-0000-0000-0000-000000000001';
 
-    const res = await updateItem(app, cookie, fakeId, 2);
+    const res = await updateItem(cookie, fakeId, 2);
     expect(res.statusCode).toBe(404);
   });
 
   it('200: increasing qty reserves more stock', async () => {
     const user = await seedUser();
-    const cookie = await loginAs(app, user.username);
-    await createCart(app, cookie);
+    const cookie = await loginAs(user.username);
+    await createCart(cookie);
     const product = await seedProduct({ stockQty: 10 });
-    const addRes = await addItem(app, cookie, product.id, 2);
+    const addRes = await addItem(cookie, product.id, 2);
     const itemId = addRes.json().id;
 
     // stock was 10, added 2 → now 8; update to qty 5 → delta +3 → stock becomes 5
-    const res = await updateItem(app, cookie, itemId, 5);
+    const res = await updateItem(cookie, itemId, 5);
 
     expect(res.statusCode).toBe(200);
     expect(res.json().qty).toBe(5);
@@ -431,14 +430,14 @@ describe('PUT /cart/items/:id', () => {
 
   it('200: decreasing qty releases stock', async () => {
     const user = await seedUser();
-    const cookie = await loginAs(app, user.username);
-    await createCart(app, cookie);
+    const cookie = await loginAs(user.username);
+    await createCart(cookie);
     const product = await seedProduct({ stockQty: 10 });
-    const addRes = await addItem(app, cookie, product.id, 5);
+    const addRes = await addItem(cookie, product.id, 5);
     const itemId = addRes.json().id;
 
     // stock was 10, added 5 → now 5; update to qty 2 → delta -3 → stock becomes 8
-    const res = await updateItem(app, cookie, itemId, 2);
+    const res = await updateItem(cookie, itemId, 2);
 
     expect(res.statusCode).toBe(200);
     expect(res.json().qty).toBe(2);
@@ -452,13 +451,13 @@ describe('PUT /cart/items/:id', () => {
 
   it('200: same qty — stock unchanged', async () => {
     const user = await seedUser();
-    const cookie = await loginAs(app, user.username);
-    await createCart(app, cookie);
+    const cookie = await loginAs(user.username);
+    await createCart(cookie);
     const product = await seedProduct({ stockQty: 10 });
-    const addRes = await addItem(app, cookie, product.id, 3);
+    const addRes = await addItem(cookie, product.id, 3);
     const itemId = addRes.json().id;
 
-    const res = await updateItem(app, cookie, itemId, 3); // delta = 0
+    const res = await updateItem(cookie, itemId, 3); // delta = 0
     expect(res.statusCode).toBe(200);
 
     const [row] = await testDb
@@ -471,38 +470,38 @@ describe('PUT /cart/items/:id', () => {
   it('403: cannot update another customer\'s cart item', async () => {
     const owner = await seedUser({ username: 'owner1' });
     const other = await seedUser({ username: 'other1' });
-    const ownerCookie = await loginAs(app, owner.username);
-    const otherCookie = await loginAs(app, other.username);
+    const ownerCookie = await loginAs(owner.username);
+    const otherCookie = await loginAs(other.username);
 
-    await createCart(app, ownerCookie);
+    await createCart(ownerCookie);
     const product = await seedProduct({ stockQty: 10 });
-    const addRes = await addItem(app, ownerCookie, product.id, 2);
+    const addRes = await addItem(ownerCookie, product.id, 2);
     const itemId = addRes.json().id;
 
-    const res = await updateItem(app, otherCookie, itemId, 5);
+    const res = await updateItem(otherCookie, itemId, 5);
     expect(res.statusCode).toBe(403);
     expect(res.json().error).toMatch(/does not belong to you/i);
   });
 
   it('409: insufficient stock when increasing qty', async () => {
     const user = await seedUser();
-    const cookie = await loginAs(app, user.username);
-    await createCart(app, cookie);
+    const cookie = await loginAs(user.username);
+    await createCart(cookie);
     const product = await seedProduct({ stockQty: 3 });
-    const addRes = await addItem(app, cookie, product.id, 3);
+    const addRes = await addItem(cookie, product.id, 3);
     const itemId = addRes.json().id;
 
     // stock is now 0; trying to increase to 5 needs 2 more
-    const res = await updateItem(app, cookie, itemId, 5);
+    const res = await updateItem(cookie, itemId, 5);
     expect(res.statusCode).toBe(409);
     expect(res.json().error).toMatch(/insufficient stock/i);
   });
 
   it('400: non-UUID item id returns 400', async () => {
     const user = await seedUser();
-    const cookie = await loginAs(app, user.username);
+    const cookie = await loginAs(user.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'PUT',
       url: '/cart/items/not-a-uuid',
       headers: { authorization: cookie },
@@ -513,10 +512,10 @@ describe('PUT /cart/items/:id', () => {
 
   it('400: qty 0 returns 400', async () => {
     const user = await seedUser();
-    const cookie = await loginAs(app, user.username);
+    const cookie = await loginAs(user.username);
     const fakeId = '00000000-0000-0000-0000-000000000001';
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'PUT',
       url: `/cart/items/${fakeId}`,
       headers: { authorization: cookie },
@@ -531,28 +530,28 @@ describe('PUT /cart/items/:id', () => {
 describe('DELETE /cart/items/:id', () => {
   it('401: requires authentication', async () => {
     const fakeId = '00000000-0000-0000-0000-000000000001';
-    const res = await deleteItem(app, '', fakeId);
+    const res = await deleteItem('', fakeId);
     expect(res.statusCode).toBe(401);
   });
 
   it('404: item not found', async () => {
     const user = await seedUser();
-    const cookie = await loginAs(app, user.username);
+    const cookie = await loginAs(user.username);
     const fakeId = '00000000-0000-0000-0000-000000000001';
 
-    const res = await deleteItem(app, cookie, fakeId);
+    const res = await deleteItem(cookie, fakeId);
     expect(res.statusCode).toBe(404);
   });
 
   it('200: deletes item and releases stock', async () => {
     const user = await seedUser();
-    const cookie = await loginAs(app, user.username);
-    await createCart(app, cookie);
+    const cookie = await loginAs(user.username);
+    await createCart(cookie);
     const product = await seedProduct({ stockQty: 10 });
-    const addRes = await addItem(app, cookie, product.id, 4);
+    const addRes = await addItem(cookie, product.id, 4);
     const itemId = addRes.json().id;
 
-    const res = await deleteItem(app, cookie, itemId);
+    const res = await deleteItem(cookie, itemId);
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ ok: true });
 
@@ -574,40 +573,40 @@ describe('DELETE /cart/items/:id', () => {
   it('403: cannot delete another customer\'s cart item', async () => {
     const owner = await seedUser({ username: 'owner2' });
     const other = await seedUser({ username: 'other2' });
-    const ownerCookie = await loginAs(app, owner.username);
-    const otherCookie = await loginAs(app, other.username);
+    const ownerCookie = await loginAs(owner.username);
+    const otherCookie = await loginAs(other.username);
 
-    await createCart(app, ownerCookie);
+    await createCart(ownerCookie);
     const product = await seedProduct({ stockQty: 5 });
-    const addRes = await addItem(app, ownerCookie, product.id, 2);
+    const addRes = await addItem(ownerCookie, product.id, 2);
     const itemId = addRes.json().id;
 
-    const res = await deleteItem(app, otherCookie, itemId);
+    const res = await deleteItem(otherCookie, itemId);
     expect(res.statusCode).toBe(403);
   });
 
   it('410: deleting item from expired cart', async () => {
     const user = await seedUser();
-    const cookie = await loginAs(app, user.username);
-    const cartRes = await createCart(app, cookie);
+    const cookie = await loginAs(user.username);
+    const cartRes = await createCart(cookie);
     const cartId = cartRes.json().id;
 
     const product = await seedProduct({ stockQty: 10 });
-    const addRes = await addItem(app, cookie, product.id, 2);
+    const addRes = await addItem(cookie, product.id, 2);
     const itemId = addRes.json().id;
 
     await expireCart(cartId);
 
-    const res = await deleteItem(app, cookie, itemId);
+    const res = await deleteItem(cookie, itemId);
     expect(res.statusCode).toBe(410);
     expect(res.json().error).toMatch(/expired/i);
   });
 
   it('400: non-UUID item id returns 400', async () => {
     const user = await seedUser();
-    const cookie = await loginAs(app, user.username);
+    const cookie = await loginAs(user.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'DELETE',
       url: '/cart/items/not-a-uuid',
       headers: { authorization: cookie },

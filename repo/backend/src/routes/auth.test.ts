@@ -1,7 +1,7 @@
 /**
  * Integration tests for authentication routes and RBAC middleware.
  *
- * Uses Fastify's inject() method to make real HTTP requests through the full
+ * Uses real HTTP network calls through the full
  * request lifecycle (validation → route handler → response) against a real
  * PostgreSQL test database.
  *
@@ -25,6 +25,7 @@ import type { FastifyInstance } from 'fastify';
 import { eq, sql } from 'drizzle-orm';
 
 import { buildAuthTestApp } from '../test/app.js';
+import { inject } from '../test/client.js';
 import {
   testDb,
   runMigrations,
@@ -39,13 +40,14 @@ import { auditLogs } from '../db/schema/audit-logs.js';
 // ── Shared state ───────────────────────────────────────────────────────────────
 
 let app: FastifyInstance;
+let url: string;
 
 beforeAll(async () => {
   // Run migrations once — idempotent; safe to call if DB already has tables.
   await runMigrations();
 
   // Build the test app with a protected test route for RBAC checks.
-  app = await buildAuthTestApp(async (fastify) => {
+  ({ app, url } = await buildAuthTestApp(async (fastify) => {
     // Route accessible to any authenticated user (requireAuth only)
     fastify.get(
       '/test/protected',
@@ -76,7 +78,7 @@ beforeAll(async () => {
       },
       async () => ({ ok: true }),
     );
-  });
+  }));
 });
 
 beforeEach(async () => {
@@ -92,7 +94,7 @@ afterAll(async () => {
 
 /** POST /auth/login and return the parsed response. */
 async function login(username: string, password: string) {
-  return app.inject({
+  return inject(url, {
     method: 'POST',
     url: '/auth/login',
     headers: { 'content-type': 'application/json' },
@@ -102,7 +104,7 @@ async function login(username: string, password: string) {
 
 /** GET /auth/me with a bearer token. */
 async function me(token: string) {
-  return app.inject({
+  return inject(url, {
     method: 'GET',
     url: '/auth/me',
     headers: { authorization: `Bearer ${token}` },
@@ -111,7 +113,7 @@ async function me(token: string) {
 
 /** POST /auth/logout with a bearer token. */
 async function logout(token: string) {
-  return app.inject({
+  return inject(url, {
     method: 'POST',
     url: '/auth/logout',
     headers: { authorization: `Bearer ${token}` },
@@ -278,7 +280,7 @@ describe('POST /auth/login — validation errors', () => {
   });
 
   it('returns 400 when body is missing entirely', async () => {
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: '/auth/login',
       headers: { 'content-type': 'application/json' },
@@ -288,7 +290,7 @@ describe('POST /auth/login — validation errors', () => {
   });
 
   it('returns 400 when password field is missing', async () => {
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: '/auth/login',
       headers: { 'content-type': 'application/json' },
@@ -511,12 +513,12 @@ describe('POST /auth/logout', () => {
   });
 
   it('returns 401 when Authorization header is missing', async () => {
-    const res = await app.inject({ method: 'POST', url: '/auth/logout' });
+    const res = await inject(url, { method: 'POST', url: '/auth/logout' });
     expect(res.statusCode).toBe(401);
   });
 
   it('returns 401 when Authorization header has wrong format (no Bearer prefix)', async () => {
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: '/auth/logout',
       headers: { authorization: 'Token abc123' },
@@ -601,7 +603,7 @@ describe('GET /auth/me', () => {
   });
 
   it('returns 401 when Authorization header is missing', async () => {
-    const res = await app.inject({ method: 'GET', url: '/auth/me' });
+    const res = await inject(url, { method: 'GET', url: '/auth/me' });
     expect(res.statusCode).toBe(401);
   });
 
@@ -659,7 +661,7 @@ describe('requireAuth middleware', () => {
     await seedUser({ username: 'alice', password: 'password1234', role: 'customer' });
     const { token } = (await login('alice', 'password1234')).json<{ token: string }>();
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'GET',
       url: '/test/protected',
       headers: { authorization: `Bearer ${token}` },
@@ -669,12 +671,12 @@ describe('requireAuth middleware', () => {
   });
 
   it('returns 401 when Authorization header is absent', async () => {
-    const res = await app.inject({ method: 'GET', url: '/test/protected' });
+    const res = await inject(url, { method: 'GET', url: '/test/protected' });
     expect(res.statusCode).toBe(401);
   });
 
   it('returns 401 for a token that does not exist in the sessions table', async () => {
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'GET',
       url: '/test/protected',
       headers: { authorization: `Bearer ${'x'.repeat(64)}` },
@@ -688,7 +690,7 @@ describe('requireAuth middleware', () => {
 
     await logout(token);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'GET',
       url: '/test/protected',
       headers: { authorization: `Bearer ${token}` },
@@ -701,7 +703,7 @@ describe('requireAuth middleware', () => {
     const { token } = (await login('alice', 'password1234')).json<{ token: string }>();
 
     const body = (
-      await app.inject({
+      await inject(url, {
         method: 'GET',
         url: '/test/protected',
         headers: { authorization: `Bearer ${token}` },
@@ -729,7 +731,7 @@ describe('requireRole — RBAC checks', () => {
   describe('/test/manager-only (requireRole manager, admin)', () => {
     it('allows manager', async () => {
       const token = await tokenFor('manager');
-      const res = await app.inject({
+      const res = await inject(url, {
         method: 'GET', url: '/test/manager-only',
         headers: { authorization: `Bearer ${token}` },
       });
@@ -738,7 +740,7 @@ describe('requireRole — RBAC checks', () => {
 
     it('allows admin', async () => {
       const token = await tokenFor('admin');
-      const res = await app.inject({
+      const res = await inject(url, {
         method: 'GET', url: '/test/manager-only',
         headers: { authorization: `Bearer ${token}` },
       });
@@ -749,7 +751,7 @@ describe('requireRole — RBAC checks', () => {
       'blocks %s (403)',
       async (role) => {
         const token = await tokenFor(role);
-        const res = await app.inject({
+        const res = await inject(url, {
           method: 'GET', url: '/test/manager-only',
           headers: { authorization: `Bearer ${token}` },
         });
@@ -762,7 +764,7 @@ describe('requireRole — RBAC checks', () => {
   describe('/test/admin-only (requireRole admin)', () => {
     it('allows admin', async () => {
       const token = await tokenFor('admin');
-      const res = await app.inject({
+      const res = await inject(url, {
         method: 'GET', url: '/test/admin-only',
         headers: { authorization: `Bearer ${token}` },
       });
@@ -773,7 +775,7 @@ describe('requireRole — RBAC checks', () => {
       'blocks %s (403)',
       async (role) => {
         const token = await tokenFor(role);
-        const res = await app.inject({
+        const res = await inject(url, {
           method: 'GET', url: '/test/admin-only',
           headers: { authorization: `Bearer ${token}` },
         });
@@ -782,7 +784,7 @@ describe('requireRole — RBAC checks', () => {
     );
 
     it('returns 401 (not 403) when completely unauthenticated', async () => {
-      const res = await app.inject({ method: 'GET', url: '/test/admin-only' });
+      const res = await inject(url, { method: 'GET', url: '/test/admin-only' });
       expect(res.statusCode).toBe(401);
     });
   });
@@ -790,7 +792,7 @@ describe('requireRole — RBAC checks', () => {
   it('403 error body contains statusCode and error fields', async () => {
     const token = await tokenFor('customer');
     const body = (
-      await app.inject({
+      await inject(url, {
         method: 'GET', url: '/test/admin-only',
         headers: { authorization: `Bearer ${token}` },
       })

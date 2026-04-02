@@ -9,13 +9,14 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { testDb, runMigrations, clearAllTables, closeDb } from '../test/db.js';
 import { buildAssociateTestApp } from '../test/app.js';
+import { inject } from '../test/client.js';
 import { seedUser, seedOrder, seedTicket } from '../test/helpers.js';
 import type { FastifyInstance } from 'fastify';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-async function loginAs(app: FastifyInstance, username: string, password = 'password1234'): Promise<string> {
-  const res = await app.inject({
+async function loginAs(username: string, password = 'password1234'): Promise<string> {
+  const res = await inject(url, {
     method: 'POST',
     url: '/auth/login',
     payload: { username, password },
@@ -26,10 +27,11 @@ async function loginAs(app: FastifyInstance, username: string, password = 'passw
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
 
 let app: FastifyInstance;
+let url: string;
 
 beforeAll(async () => {
   await runMigrations();
-  app = await buildAssociateTestApp();
+  ({ app, url } = await buildAssociateTestApp());
 });
 
 afterAll(async () => {
@@ -42,15 +44,15 @@ afterAll(async () => {
 
 describe('GET /associate/tickets', () => {
   it('returns 401 when not authenticated', async () => {
-    const res = await app.inject({ method: 'GET', url: '/associate/tickets' });
+    const res = await inject(url, { method: 'GET', url: '/associate/tickets' });
     expect(res.statusCode).toBe(401);
   });
 
   it('returns 403 for customer role', async () => {
     const customer = await seedUser({ role: 'customer' });
-    const auth = await loginAs(app, customer.username);
+    const auth = await loginAs(customer.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'GET',
       url: '/associate/tickets',
       headers: { authorization: auth },
@@ -61,9 +63,9 @@ describe('GET /associate/tickets', () => {
 
   it('returns 200 with empty data when no tickets exist', async () => {
     const associate = await seedUser({ role: 'associate' });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'GET',
       url: '/associate/tickets',
       headers: { authorization: auth },
@@ -80,7 +82,7 @@ describe('GET /associate/tickets', () => {
   it('returns active (non-terminal) tickets only', async () => {
     const associate = await seedUser({ role: 'associate' });
     const customer = await seedUser({ role: 'customer' });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
     const order1 = await seedOrder({ customerId: customer.id, status: 'picked_up' });
     const order2 = await seedOrder({ customerId: customer.id, status: 'picked_up' });
@@ -90,7 +92,7 @@ describe('GET /associate/tickets', () => {
     const inProgressTicket = await seedTicket({ orderId: order2.id, customerId: customer.id, status: 'in_progress' });
     await seedTicket({ orderId: order3.id, customerId: customer.id, status: 'resolved', outcome: 'approved' });
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'GET',
       url: '/associate/tickets',
       headers: { authorization: auth },
@@ -109,12 +111,12 @@ describe('GET /associate/tickets', () => {
   it('excludes cancelled tickets', async () => {
     const associate = await seedUser({ role: 'associate' });
     const customer = await seedUser({ role: 'customer' });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
     const cancelledTicket = await seedTicket({ orderId: order.id, customerId: customer.id, status: 'cancelled' });
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'GET',
       url: '/associate/tickets',
       headers: { authorization: auth },
@@ -129,7 +131,7 @@ describe('GET /associate/tickets', () => {
   it('filters by department when department param is provided', async () => {
     const associate = await seedUser({ role: 'associate' });
     const customer = await seedUser({ role: 'customer' });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
     const order1 = await seedOrder({ customerId: customer.id, status: 'picked_up' });
     const order2 = await seedOrder({ customerId: customer.id, status: 'picked_up' });
@@ -147,7 +149,7 @@ describe('GET /associate/tickets', () => {
       type: 'refund',
     });
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'GET',
       url: '/associate/tickets?department=fulfillment',
       headers: { authorization: auth },
@@ -163,9 +165,9 @@ describe('GET /associate/tickets', () => {
 
   it('rejects an invalid department value with 400', async () => {
     const associate = await seedUser({ role: 'associate' });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'GET',
       url: '/associate/tickets?department=invalid_dept',
       headers: { authorization: auth },
@@ -177,7 +179,7 @@ describe('GET /associate/tickets', () => {
   it('paginates results correctly', async () => {
     const associate = await seedUser({ role: 'associate' });
     const customer = await seedUser({ role: 'customer' });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
     // Seed 3 open tickets in accounting dept to isolate from other tests
     for (let i = 0; i < 3; i++) {
@@ -185,7 +187,7 @@ describe('GET /associate/tickets', () => {
       await seedTicket({ orderId: order.id, customerId: customer.id, department: 'accounting', type: 'refund' });
     }
 
-    const page1 = await app.inject({
+    const page1 = await inject(url, {
       method: 'GET',
       url: '/associate/tickets?department=accounting&limit=2&offset=0',
       headers: { authorization: auth },
@@ -198,7 +200,7 @@ describe('GET /associate/tickets', () => {
     expect(body1.offset).toBe(0);
     expect(body1.total).toBeGreaterThanOrEqual(3);
 
-    const page2 = await app.inject({
+    const page2 = await inject(url, {
       method: 'GET',
       url: '/associate/tickets?department=accounting&limit=2&offset=2',
       headers: { authorization: auth },
@@ -212,9 +214,9 @@ describe('GET /associate/tickets', () => {
 
   it('is accessible by supervisor role', async () => {
     const supervisor = await seedUser({ role: 'supervisor' });
-    const auth = await loginAs(app, supervisor.username);
+    const auth = await loginAs(supervisor.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'GET',
       url: '/associate/tickets',
       headers: { authorization: auth },
@@ -225,9 +227,9 @@ describe('GET /associate/tickets', () => {
 
   it('is accessible by manager role', async () => {
     const manager = await seedUser({ role: 'manager' });
-    const auth = await loginAs(app, manager.username);
+    const auth = await loginAs(manager.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'GET',
       url: '/associate/tickets',
       headers: { authorization: auth },
@@ -239,7 +241,7 @@ describe('GET /associate/tickets', () => {
   it('returns correct shape for each ticket item', async () => {
     const associate = await seedUser({ role: 'associate' });
     const customer = await seedUser({ role: 'customer' });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
     const ticket = await seedTicket({
@@ -249,7 +251,7 @@ describe('GET /associate/tickets', () => {
       department: 'fulfillment',
     });
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'GET',
       url: '/associate/tickets',
       headers: { authorization: auth },
@@ -277,7 +279,7 @@ describe('GET /associate/tickets', () => {
   it('includes pending_inspection tickets as active', async () => {
     const associate = await seedUser({ role: 'associate' });
     const customer = await seedUser({ role: 'customer' });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
     const ticket = await seedTicket({
@@ -286,7 +288,7 @@ describe('GET /associate/tickets', () => {
       status: 'pending_inspection',
     });
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'GET',
       url: '/associate/tickets',
       headers: { authorization: auth },

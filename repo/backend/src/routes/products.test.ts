@@ -21,16 +21,18 @@ import {
 import type { FastifyInstance } from 'fastify';
 
 import { buildProductTestApp } from '../test/app.js';
+import { inject } from '../test/client.js';
 import { runMigrations, clearAllTables, closeDb } from '../test/db.js';
 import { seedProduct } from '../test/helpers.js';
 
 // ── Shared app + lifecycle ─────────────────────────────────────────────────────
 
 let app: FastifyInstance;
+let url: string;
 
 beforeAll(async () => {
   await runMigrations();
-  app = await buildProductTestApp();
+  ({ app, url } = await buildProductTestApp());
 });
 
 beforeEach(async () => {
@@ -65,16 +67,16 @@ type ListResponse = {
 
 async function getProducts(query: Record<string, string | number | boolean> = {}) {
   const qs = new URLSearchParams(
-    Object.entries(query).map(([k, v]) => [k, String(v)]),
+    Object.entries(query).map(([k, v]) => [k, String(v)] as [string, string]),
   ).toString();
-  return app.inject({
+  return inject(url, {
     method: 'GET',
     url: qs ? `/products?${qs}` : '/products',
   });
 }
 
 async function getProduct(id: string) {
-  return app.inject({ method: 'GET', url: `/products/${id}` });
+  return inject(url, { method: 'GET', url: `/products/${id}` });
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -516,7 +518,7 @@ describe('GET /products — full-text search (q)', () => {
   });
 
   it('empty q string returns 400 (min length 1)', async () => {
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'GET',
       url: '/products?q=',
     });
@@ -589,7 +591,7 @@ describe('GET /products — full-text search (q)', () => {
 
   it('q with whitespace-only string is trimmed and treated as empty → 400', async () => {
     // The schema trims the value; after trimming "   " becomes "" which fails min(1)
-    const res = await app.inject({ method: 'GET', url: '/products?q=%20%20%20' });
+    const res = await inject(url, { method: 'GET', url: '/products?q=%20%20%20' });
     expect(res.statusCode).toBe(400);
   });
 });
@@ -746,9 +748,9 @@ describe('GET /products — edge cases', () => {
 
   it('products with null brand and null category are returned without errors', async () => {
     await seedProduct({ brand: undefined, category: undefined });
-    const body = (await getProducts()).json<ListResponse>();
-    expect(body.statusCode).toBeUndefined(); // no error
-    expect(body.data).toHaveLength(1);
+    const res = await getProducts();
+    expect(res.statusCode).toBe(200); // no error
+    expect(res.json<ListResponse>().data).toHaveLength(1);
   });
 
   it('a product with stockQty=0 appears in list results (not filtered unless available=true)', async () => {

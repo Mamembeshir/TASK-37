@@ -12,6 +12,7 @@ import { testDb, runMigrations, clearAllTables, closeDb } from '../test/db.js';
 import {
   buildReviewTestApp,
 } from '../test/app.js';
+import { inject } from '../test/client.js';
 import {
   seedUser,
   seedProduct,
@@ -28,8 +29,8 @@ import type { FastifyInstance } from 'fastify';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-async function loginAs(app: FastifyInstance, username: string, password = 'password1234'): Promise<string> {
-  const res = await app.inject({
+async function loginAs(username: string, password = 'password1234'): Promise<string> {
+  const res = await inject(url, {
     method: 'POST',
     url: '/auth/login',
     payload: { username, password },
@@ -41,10 +42,11 @@ async function loginAs(app: FastifyInstance, username: string, password = 'passw
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
 
 let app: FastifyInstance;
+let url: string;
 
 beforeAll(async () => {
   await runMigrations();
-  app = await buildReviewTestApp();
+  ({ app, url } = await buildReviewTestApp());
 });
 
 afterAll(async () => {
@@ -57,20 +59,20 @@ afterAll(async () => {
 
 describe('POST /reviews', () => {
   it('returns 401 when not authenticated', async () => {
-    const res = await app.inject({ method: 'POST', url: '/reviews' });
+    const res = await inject(url, { method: 'POST', url: '/reviews' });
     expect(res.statusCode).toBe(401);
   });
 
   it('returns 400 when body field is missing', async () => {
     const customer = await seedUser({ role: 'customer' });
-    const auth = await loginAs(app, customer.username);
+    const auth = await loginAs(customer.username);
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
 
     const { body, contentType } = buildMultipart({
       fields: { orderId: order.id },
     });
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: '/reviews',
       headers: { authorization: auth, 'content-type': contentType },
@@ -82,13 +84,13 @@ describe('POST /reviews', () => {
 
   it('returns 400 when orderId is missing', async () => {
     const customer = await seedUser({ role: 'customer' });
-    const auth = await loginAs(app, customer.username);
+    const auth = await loginAs(customer.username);
 
     const { body, contentType } = buildMultipart({
       fields: { body: 'Great product!' },
     });
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: '/reviews',
       headers: { authorization: auth, 'content-type': contentType },
@@ -100,14 +102,14 @@ describe('POST /reviews', () => {
 
   it('returns 404 when order does not exist', async () => {
     const customer = await seedUser({ role: 'customer' });
-    const auth = await loginAs(app, customer.username);
+    const auth = await loginAs(customer.username);
     const fakeOrderId = '00000000-0000-0000-0000-000000000001';
 
     const { body, contentType } = buildMultipart({
       fields: { body: 'Great!', orderId: fakeOrderId },
     });
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: '/reviews',
       headers: { authorization: auth, 'content-type': contentType },
@@ -120,13 +122,13 @@ describe('POST /reviews', () => {
     const owner = await seedUser({ role: 'customer' });
     const other = await seedUser({ role: 'customer' });
     const order = await seedOrder({ customerId: owner.id, status: 'picked_up' });
-    const auth = await loginAs(app, other.username);
+    const auth = await loginAs(other.username);
 
     const { body, contentType } = buildMultipart({
       fields: { body: 'Great!', orderId: order.id },
     });
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: '/reviews',
       headers: { authorization: auth, 'content-type': contentType },
@@ -138,13 +140,13 @@ describe('POST /reviews', () => {
   it('returns 409 when order is not picked_up', async () => {
     const customer = await seedUser({ role: 'customer' });
     const order = await seedOrder({ customerId: customer.id, status: 'confirmed' });
-    const auth = await loginAs(app, customer.username);
+    const auth = await loginAs(customer.username);
 
     const { body, contentType } = buildMultipart({
       fields: { body: 'Great!', orderId: order.id },
     });
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: '/reviews',
       headers: { authorization: auth, 'content-type': contentType },
@@ -158,13 +160,13 @@ describe('POST /reviews', () => {
     const customer = await seedUser({ role: 'customer' });
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
     await seedReview({ orderId: order.id, customerId: customer.id });
-    const auth = await loginAs(app, customer.username);
+    const auth = await loginAs(customer.username);
 
     const { body, contentType } = buildMultipart({
       fields: { body: 'Another review', orderId: order.id },
     });
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: '/reviews',
       headers: { authorization: auth, 'content-type': contentType },
@@ -177,13 +179,13 @@ describe('POST /reviews', () => {
   it('creates review successfully (201) with correct shape', async () => {
     const customer = await seedUser({ role: 'customer' });
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
-    const auth = await loginAs(app, customer.username);
+    const auth = await loginAs(customer.username);
 
     const { body, contentType } = buildMultipart({
       fields: { body: 'Excellent purchase!', orderId: order.id },
     });
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: '/reviews',
       headers: { authorization: auth, 'content-type': contentType },
@@ -203,7 +205,7 @@ describe('POST /reviews', () => {
   it('creates review with a valid JPEG image attachment', async () => {
     const customer = await seedUser({ role: 'customer' });
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
-    const auth = await loginAs(app, customer.username);
+    const auth = await loginAs(customer.username);
 
     const { body, contentType } = buildMultipart({
       fields: { body: 'Great product, see photo!', orderId: order.id },
@@ -212,7 +214,7 @@ describe('POST /reviews', () => {
       ],
     });
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: '/reviews',
       headers: { authorization: auth, 'content-type': contentType },
@@ -228,7 +230,7 @@ describe('POST /reviews', () => {
   it('returns 400 when image has unsupported MIME type', async () => {
     const customer = await seedUser({ role: 'customer' });
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
-    const auth = await loginAs(app, customer.username);
+    const auth = await loginAs(customer.username);
 
     const { body, contentType } = buildMultipart({
       fields: { body: 'Review with gif', orderId: order.id },
@@ -237,7 +239,7 @@ describe('POST /reviews', () => {
       ],
     });
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: '/reviews',
       headers: { authorization: auth, 'content-type': contentType },
@@ -250,7 +252,7 @@ describe('POST /reviews', () => {
   it('returns 400 when JPEG content-type has wrong magic bytes', async () => {
     const customer = await seedUser({ role: 'customer' });
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
-    const auth = await loginAs(app, customer.username);
+    const auth = await loginAs(customer.username);
 
     // Send PNG bytes but claim image/jpeg
     const { body, contentType } = buildMultipart({
@@ -260,7 +262,7 @@ describe('POST /reviews', () => {
       ],
     });
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: '/reviews',
       headers: { authorization: auth, 'content-type': contentType },
@@ -274,7 +276,7 @@ describe('POST /reviews', () => {
     const staff = await seedUser({ role: 'associate' });
     const customer = await seedUser({ role: 'customer' });
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
-    const auth = await loginAs(app, customer.username);
+    const auth = await loginAs(customer.username);
 
     const sha256 = createHash('sha256').update(VALID_JPEG_BUFFER).digest('hex');
     await seedImageHash({ sha256, flaggedBy: staff.id });
@@ -286,7 +288,7 @@ describe('POST /reviews', () => {
       ],
     });
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: '/reviews',
       headers: { authorization: auth, 'content-type': contentType },
@@ -300,7 +302,7 @@ describe('POST /reviews', () => {
     const admin = await seedUser({ role: 'admin' });
     const customer = await seedUser({ role: 'customer' });
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
-    const auth = await loginAs(app, customer.username);
+    const auth = await loginAs(customer.username);
 
     await seedBannedTerm({ term: 'badphrase', isActive: true, createdBy: admin.id });
 
@@ -308,7 +310,7 @@ describe('POST /reviews', () => {
       fields: { body: 'This product has badphrase issues!', orderId: order.id },
     });
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: '/reviews',
       headers: { authorization: auth, 'content-type': contentType },
@@ -331,18 +333,18 @@ describe('POST /reviews', () => {
 
 describe('POST /reviews/:id/followup', () => {
   it('returns 401 when not authenticated', async () => {
-    const res = await app.inject({ method: 'POST', url: '/reviews/00000000-0000-0000-0000-000000000001/followup' });
+    const res = await inject(url, { method: 'POST', url: '/reviews/00000000-0000-0000-0000-000000000001/followup' });
     expect(res.statusCode).toBe(401);
   });
 
   it('returns 404 when parent review does not exist', async () => {
     const customer = await seedUser({ role: 'customer' });
-    const auth = await loginAs(app, customer.username);
+    const auth = await loginAs(customer.username);
     const fakeId = '00000000-0000-0000-0000-000000000002';
 
     const { body, contentType } = buildMultipart({ fields: { body: 'Follow up text' } });
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/reviews/${fakeId}/followup`,
       headers: { authorization: auth, 'content-type': contentType },
@@ -356,11 +358,11 @@ describe('POST /reviews/:id/followup', () => {
     const other = await seedUser({ role: 'customer' });
     const order = await seedOrder({ customerId: owner.id, status: 'picked_up' });
     const review = await seedReview({ orderId: order.id, customerId: owner.id });
-    const auth = await loginAs(app, other.username);
+    const auth = await loginAs(other.username);
 
     const { body, contentType } = buildMultipart({ fields: { body: 'Unauthorized follow up' } });
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/reviews/${review.id}/followup`,
       headers: { authorization: auth, 'content-type': contentType },
@@ -379,11 +381,11 @@ describe('POST /reviews/:id/followup', () => {
       isFollowup: true,
       parentReviewId: original.id,
     });
-    const auth = await loginAs(app, customer.username);
+    const auth = await loginAs(customer.username);
 
     const { body, contentType } = buildMultipart({ fields: { body: 'Second follow up attempt' } });
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/reviews/${followup.id}/followup`,
       headers: { authorization: auth, 'content-type': contentType },
@@ -404,11 +406,11 @@ describe('POST /reviews/:id/followup', () => {
       isFollowup: true,
       parentReviewId: original.id,
     });
-    const auth = await loginAs(app, customer.username);
+    const auth = await loginAs(customer.username);
 
     const { body, contentType } = buildMultipart({ fields: { body: 'Duplicate follow up' } });
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/reviews/${original.id}/followup`,
       headers: { authorization: auth, 'content-type': contentType },
@@ -422,13 +424,13 @@ describe('POST /reviews/:id/followup', () => {
     const customer = await seedUser({ role: 'customer' });
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
     const original = await seedReview({ orderId: order.id, customerId: customer.id });
-    const auth = await loginAs(app, customer.username);
+    const auth = await loginAs(customer.username);
 
     const { body, contentType } = buildMultipart({
       fields: { body: 'I have an update on this product.' },
     });
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/reviews/${original.id}/followup`,
       headers: { authorization: auth, 'content-type': contentType },
@@ -446,7 +448,7 @@ describe('POST /reviews/:id/followup', () => {
 
 describe('GET /reviews', () => {
   it('returns 401 when not authenticated', async () => {
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'GET',
       url: '/reviews?orderId=00000000-0000-0000-0000-000000000001',
     });
@@ -455,8 +457,8 @@ describe('GET /reviews', () => {
 
   it('returns 400 when orderId query param is missing', async () => {
     const customer = await seedUser({ role: 'customer' });
-    const auth = await loginAs(app, customer.username);
-    const res = await app.inject({
+    const auth = await loginAs(customer.username);
+    const res = await inject(url, {
       method: 'GET',
       url: '/reviews',
       headers: { authorization: auth },
@@ -466,8 +468,8 @@ describe('GET /reviews', () => {
 
   it('returns 404 when order does not exist', async () => {
     const customer = await seedUser({ role: 'customer' });
-    const auth = await loginAs(app, customer.username);
-    const res = await app.inject({
+    const auth = await loginAs(customer.username);
+    const res = await inject(url, {
       method: 'GET',
       url: '/reviews?orderId=00000000-0000-0000-0000-000000000003',
       headers: { authorization: auth },
@@ -479,9 +481,9 @@ describe('GET /reviews', () => {
     const owner = await seedUser({ role: 'customer' });
     const other = await seedUser({ role: 'customer' });
     const order = await seedOrder({ customerId: owner.id, status: 'picked_up' });
-    const auth = await loginAs(app, other.username);
+    const auth = await loginAs(other.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'GET',
       url: `/reviews?orderId=${order.id}`,
       headers: { authorization: auth },
@@ -492,9 +494,9 @@ describe('GET /reviews', () => {
   it('returns empty array when order has no reviews', async () => {
     const customer = await seedUser({ role: 'customer' });
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
-    const auth = await loginAs(app, customer.username);
+    const auth = await loginAs(customer.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'GET',
       url: `/reviews?orderId=${order.id}`,
       headers: { authorization: auth },
@@ -507,9 +509,9 @@ describe('GET /reviews', () => {
     const customer = await seedUser({ role: 'customer' });
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
     await seedReview({ orderId: order.id, customerId: customer.id, body: 'My review' });
-    const auth = await loginAs(app, customer.username);
+    const auth = await loginAs(customer.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'GET',
       url: `/reviews?orderId=${order.id}`,
       headers: { authorization: auth },
@@ -526,9 +528,9 @@ describe('GET /reviews', () => {
     const associate = await seedUser({ role: 'associate' });
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
     await seedReview({ orderId: order.id, customerId: customer.id });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'GET',
       url: `/reviews?orderId=${order.id}`,
       headers: { authorization: auth },
@@ -547,9 +549,9 @@ describe('GET /reviews', () => {
       isFollowup: true,
       parentReviewId: original.id,
     });
-    const auth = await loginAs(app, customer.username);
+    const auth = await loginAs(customer.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'GET',
       url: `/reviews?orderId=${order.id}`,
       headers: { authorization: auth },

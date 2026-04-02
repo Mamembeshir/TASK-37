@@ -9,6 +9,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { testDb, runMigrations, clearAllTables, closeDb } from '../test/db.js';
 import { buildModerationTestApp } from '../test/app.js';
+import { inject } from '../test/client.js';
 import {
   seedUser,
   seedOrder,
@@ -25,8 +26,8 @@ import type { FastifyInstance } from 'fastify';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-async function loginAs(app: FastifyInstance, username: string, password = 'password1234'): Promise<string> {
-  const res = await app.inject({
+async function loginAs(username: string, password = 'password1234'): Promise<string> {
+  const res = await inject(url, {
     method: 'POST',
     url: '/auth/login',
     payload: { username, password },
@@ -37,10 +38,11 @@ async function loginAs(app: FastifyInstance, username: string, password = 'passw
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
 
 let app: FastifyInstance;
+let url: string;
 
 beforeAll(async () => {
   await runMigrations();
-  app = await buildModerationTestApp();
+  ({ app, url } = await buildModerationTestApp());
 });
 
 afterAll(async () => {
@@ -53,7 +55,7 @@ afterAll(async () => {
 
 describe('POST /moderation/flags/:id/report', () => {
   it('returns 401 when not authenticated', async () => {
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: '/moderation/flags/00000000-0000-0000-0000-000000000001/report',
       payload: { entityType: 'review', reason: 'Inappropriate' },
@@ -63,12 +65,12 @@ describe('POST /moderation/flags/:id/report', () => {
 
   it('returns 400 when body is invalid (missing entityType)', async () => {
     const user = await seedUser({ role: 'customer' });
-    const auth = await loginAs(app, user.username);
+    const auth = await loginAs(user.username);
 
     const order = await seedOrder({ customerId: user.id, status: 'picked_up' });
     const review = await seedReview({ orderId: order.id, customerId: user.id });
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/moderation/flags/${review.id}/report`,
       headers: { authorization: auth },
@@ -82,9 +84,9 @@ describe('POST /moderation/flags/:id/report', () => {
     const owner = await seedUser({ role: 'customer' });
     const order = await seedOrder({ customerId: owner.id, status: 'picked_up' });
     const review = await seedReview({ orderId: order.id, customerId: owner.id });
-    const auth = await loginAs(app, reporter.username);
+    const auth = await loginAs(reporter.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/moderation/flags/${review.id}/report`,
       headers: { authorization: auth },
@@ -104,10 +106,10 @@ describe('POST /moderation/flags/:id/report', () => {
     const owner = await seedUser({ role: 'customer' });
     const order = await seedOrder({ customerId: owner.id, status: 'picked_up' });
     const review = await seedReview({ orderId: order.id, customerId: owner.id });
-    const auth = await loginAs(app, reporter.username);
+    const auth = await loginAs(reporter.username);
 
     // First report
-    await app.inject({
+    await inject(url, {
       method: 'POST',
       url: `/moderation/flags/${review.id}/report`,
       headers: { authorization: auth },
@@ -115,7 +117,7 @@ describe('POST /moderation/flags/:id/report', () => {
     });
 
     // Duplicate report on same entity same day
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/moderation/flags/${review.id}/report`,
       headers: { authorization: auth },
@@ -127,7 +129,7 @@ describe('POST /moderation/flags/:id/report', () => {
 
   it('returns 429 when user exceeds 5 reports per day', async () => {
     const reporter = await seedUser({ role: 'customer' });
-    const auth = await loginAs(app, reporter.username);
+    const auth = await loginAs(reporter.username);
 
     // Seed 5 existing user_report flags for today to hit the limit
     for (let i = 0; i < 5; i++) {
@@ -147,7 +149,7 @@ describe('POST /moderation/flags/:id/report', () => {
     const order = await seedOrder({ customerId: owner.id, status: 'picked_up' });
     const review = await seedReview({ orderId: order.id, customerId: owner.id });
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/moderation/flags/${review.id}/report`,
       headers: { authorization: auth },
@@ -163,9 +165,9 @@ describe('POST /moderation/flags/:id/report', () => {
     const order = await seedOrder({ customerId: owner.id, status: 'picked_up' });
     const review = await seedReview({ orderId: order.id, customerId: owner.id });
     const img = await seedReviewImage({ reviewId: review.id });
-    const auth = await loginAs(app, reporter.username);
+    const auth = await loginAs(reporter.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/moderation/flags/${img.id}/report`,
       headers: { authorization: auth },
@@ -181,15 +183,15 @@ describe('POST /moderation/flags/:id/report', () => {
 
 describe('GET /moderation/appeals', () => {
   it('returns 401 when not authenticated', async () => {
-    const res = await app.inject({ method: 'GET', url: '/moderation/appeals' });
+    const res = await inject(url, { method: 'GET', url: '/moderation/appeals' });
     expect(res.statusCode).toBe(401);
   });
 
   it('returns 403 when authenticated as customer', async () => {
     const customer = await seedUser({ role: 'customer' });
-    const auth = await loginAs(app, customer.username);
+    const auth = await loginAs(customer.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'GET',
       url: '/moderation/appeals',
       headers: { authorization: auth },
@@ -199,9 +201,9 @@ describe('GET /moderation/appeals', () => {
 
   it('returns empty array when no pending appeals', async () => {
     const associate = await seedUser({ role: 'associate' });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'GET',
       url: '/moderation/appeals',
       headers: { authorization: auth },
@@ -218,8 +220,8 @@ describe('GET /moderation/appeals', () => {
     const flag = await seedModerationFlag({ entityType: 'review', entityId: review.id });
     await seedModerationAppeal({ flagId: flag.id, submittedBy: customer.id, reason: 'I disagree' });
 
-    const auth = await loginAs(app, associate.username);
-    const res = await app.inject({
+    const auth = await loginAs(associate.username);
+    const res = await inject(url, {
       method: 'GET',
       url: '/moderation/appeals',
       headers: { authorization: auth },
@@ -250,8 +252,8 @@ describe('GET /moderation/appeals', () => {
       status: 'approved',
     });
 
-    const auth = await loginAs(app, associate.username);
-    const res = await app.inject({
+    const auth = await loginAs(associate.username);
+    const res = await inject(url, {
       method: 'GET',
       url: '/moderation/appeals',
       headers: { authorization: auth },
@@ -263,9 +265,9 @@ describe('GET /moderation/appeals', () => {
 
   it('supervisor can also access the appeals queue', async () => {
     const supervisor = await seedUser({ role: 'supervisor' });
-    const auth = await loginAs(app, supervisor.username);
+    const auth = await loginAs(supervisor.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'GET',
       url: '/moderation/appeals',
       headers: { authorization: auth },
@@ -278,7 +280,7 @@ describe('GET /moderation/appeals', () => {
 
 describe('PUT /moderation/appeals/:id/resolve', () => {
   it('returns 401 when not authenticated', async () => {
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'PUT',
       url: '/moderation/appeals/00000000-0000-0000-0000-000000000001/resolve',
       payload: { decision: 'approved' },
@@ -288,9 +290,9 @@ describe('PUT /moderation/appeals/:id/resolve', () => {
 
   it('returns 403 when authenticated as customer', async () => {
     const customer = await seedUser({ role: 'customer' });
-    const auth = await loginAs(app, customer.username);
+    const auth = await loginAs(customer.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'PUT',
       url: '/moderation/appeals/00000000-0000-0000-0000-000000000002/resolve',
       headers: { authorization: auth },
@@ -301,9 +303,9 @@ describe('PUT /moderation/appeals/:id/resolve', () => {
 
   it('returns 404 when appeal does not exist', async () => {
     const associate = await seedUser({ role: 'associate' });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'PUT',
       url: '/moderation/appeals/00000000-0000-0000-0000-000000000003/resolve',
       headers: { authorization: auth },
@@ -327,9 +329,9 @@ describe('PUT /moderation/appeals/:id/resolve', () => {
       submittedBy: customer.id,
       status: 'approved',
     });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'PUT',
       url: `/moderation/appeals/${appeal.id}/resolve`,
       headers: { authorization: auth },
@@ -346,9 +348,9 @@ describe('PUT /moderation/appeals/:id/resolve', () => {
     const review = await seedReview({ orderId: order.id, customerId: customer.id, moderationStatus: 'flagged' });
     const flag = await seedModerationFlag({ entityType: 'review', entityId: review.id });
     const appeal = await seedModerationAppeal({ flagId: flag.id, submittedBy: customer.id });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'PUT',
       url: `/moderation/appeals/${appeal.id}/resolve`,
       headers: { authorization: auth },
@@ -372,9 +374,9 @@ describe('PUT /moderation/appeals/:id/resolve', () => {
     const review = await seedReview({ orderId: order.id, customerId: customer.id, moderationStatus: 'flagged' });
     const flag = await seedModerationFlag({ entityType: 'review', entityId: review.id });
     const appeal = await seedModerationAppeal({ flagId: flag.id, submittedBy: customer.id });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'PUT',
       url: `/moderation/appeals/${appeal.id}/resolve`,
       headers: { authorization: auth },
@@ -402,9 +404,9 @@ describe('PUT /moderation/appeals/:id/resolve', () => {
     const img = await seedReviewImage({ reviewId: review.id, sha256 });
     const flag = await seedModerationFlag({ entityType: 'review_image', entityId: img.id });
     const appeal = await seedModerationAppeal({ flagId: flag.id, submittedBy: customer.id });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'PUT',
       url: `/moderation/appeals/${appeal.id}/resolve`,
       headers: { authorization: auth },
@@ -430,9 +432,9 @@ describe('PUT /moderation/appeals/:id/resolve', () => {
     const img = await seedReviewImage({ reviewId: review.id, sha256 });
     const flag = await seedModerationFlag({ entityType: 'review_image', entityId: img.id });
     const appeal = await seedModerationAppeal({ flagId: flag.id, submittedBy: customer.id });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'PUT',
       url: `/moderation/appeals/${appeal.id}/resolve`,
       headers: { authorization: auth },
@@ -454,9 +456,9 @@ describe('PUT /moderation/appeals/:id/resolve', () => {
     const review = await seedReview({ orderId: order.id, customerId: customer.id, moderationStatus: 'flagged' });
     const flag = await seedModerationFlag({ entityType: 'review', entityId: review.id });
     const appeal = await seedModerationAppeal({ flagId: flag.id, submittedBy: customer.id });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'PUT',
       url: `/moderation/appeals/${appeal.id}/resolve`,
       headers: { authorization: auth },

@@ -8,13 +8,14 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { testDb, runMigrations, clearAllTables, closeDb } from '../test/db.js';
 import { buildTicketTestApp } from '../test/app.js';
+import { inject } from '../test/client.js';
 import { seedUser, seedOrder, seedTicket, seedNotification } from '../test/helpers.js';
 import type { FastifyInstance } from 'fastify';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-async function loginAs(app: FastifyInstance, username: string, password = 'password1234'): Promise<string> {
-  const res = await app.inject({
+async function loginAs(username: string, password = 'password1234'): Promise<string> {
+  const res = await inject(url, {
     method: 'POST',
     url: '/auth/login',
     payload: { username, password },
@@ -25,10 +26,11 @@ async function loginAs(app: FastifyInstance, username: string, password = 'passw
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
 
 let app: FastifyInstance;
+let url: string;
 
 beforeAll(async () => {
   await runMigrations();
-  app = await buildTicketTestApp();
+  ({ app, url } = await buildTicketTestApp());
 });
 
 afterAll(async () => {
@@ -41,15 +43,15 @@ afterAll(async () => {
 
 describe('GET /notifications', () => {
   it('returns 401 when not authenticated', async () => {
-    const res = await app.inject({ method: 'GET', url: '/notifications' });
+    const res = await inject(url, { method: 'GET', url: '/notifications' });
     expect(res.statusCode).toBe(401);
   });
 
   it('returns 200 with empty array when customer has no notifications', async () => {
     const customer = await seedUser({ role: 'customer' });
-    const auth = await loginAs(app, customer.username);
+    const auth = await loginAs(customer.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'GET',
       url: '/notifications',
       headers: { authorization: auth },
@@ -63,7 +65,7 @@ describe('GET /notifications', () => {
     const customer = await seedUser({ role: 'customer' });
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
     const ticket = await seedTicket({ orderId: order.id, customerId: customer.id });
-    const auth = await loginAs(app, customer.username);
+    const auth = await loginAs(customer.username);
 
     await seedNotification({
       customerId: customer.id,
@@ -73,7 +75,7 @@ describe('GET /notifications', () => {
       isRead: false,
     });
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'GET',
       url: '/notifications',
       headers: { authorization: auth },
@@ -91,7 +93,7 @@ describe('GET /notifications', () => {
     const customer = await seedUser({ role: 'customer' });
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
     const ticket = await seedTicket({ orderId: order.id, customerId: customer.id });
-    const auth = await loginAs(app, customer.username);
+    const auth = await loginAs(customer.username);
 
     await seedNotification({
       customerId: customer.id,
@@ -101,7 +103,7 @@ describe('GET /notifications', () => {
       isRead: true,
     });
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'GET',
       url: '/notifications',
       headers: { authorization: auth },
@@ -118,7 +120,7 @@ describe('GET /notifications', () => {
     const customer2 = await seedUser({ role: 'customer' });
     const order = await seedOrder({ customerId: customer2.id, status: 'picked_up' });
     const ticket = await seedTicket({ orderId: order.id, customerId: customer2.id });
-    const auth = await loginAs(app, customer1.username);
+    const auth = await loginAs(customer1.username);
 
     await seedNotification({
       customerId: customer2.id,
@@ -127,7 +129,7 @@ describe('GET /notifications', () => {
       entityId: ticket.id,
     });
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'GET',
       url: '/notifications',
       headers: { authorization: auth },
@@ -143,7 +145,7 @@ describe('GET /notifications', () => {
     const customer = await seedUser({ role: 'customer' });
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
     const ticket = await seedTicket({ orderId: order.id, customerId: customer.id });
-    const auth = await loginAs(app, customer.username);
+    const auth = await loginAs(customer.username);
 
     await seedNotification({
       customerId: customer.id,
@@ -152,7 +154,7 @@ describe('GET /notifications', () => {
       entityId: ticket.id,
     });
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'GET',
       url: '/notifications',
       headers: { authorization: auth },
@@ -173,7 +175,7 @@ describe('GET /notifications', () => {
 
   it('staff can also receive and read own notifications', async () => {
     const associate = await seedUser({ role: 'associate' });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
     await seedNotification({
       customerId: associate.id,
@@ -182,7 +184,7 @@ describe('GET /notifications', () => {
       entityId: randomUUID(),
     });
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'GET',
       url: '/notifications',
       headers: { authorization: auth },
@@ -199,7 +201,7 @@ describe('GET /notifications', () => {
 
 describe('PUT /notifications/:id/read', () => {
   it('returns 401 when not authenticated', async () => {
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'PUT',
       url: `/notifications/${randomUUID()}/read`,
     });
@@ -208,9 +210,9 @@ describe('PUT /notifications/:id/read', () => {
 
   it('returns 404 when notification does not exist', async () => {
     const customer = await seedUser({ role: 'customer' });
-    const auth = await loginAs(app, customer.username);
+    const auth = await loginAs(customer.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'PUT',
       url: `/notifications/${randomUUID()}/read`,
       headers: { authorization: auth },
@@ -223,14 +225,14 @@ describe('PUT /notifications/:id/read', () => {
   it('returns 403 when trying to mark another users notification as read', async () => {
     const customer1 = await seedUser({ role: 'customer' });
     const customer2 = await seedUser({ role: 'customer' });
-    const auth = await loginAs(app, customer1.username);
+    const auth = await loginAs(customer1.username);
 
     const notification = await seedNotification({
       customerId: customer2.id,
       message: "Your ticket status has been updated to 'resolved'.",
     });
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'PUT',
       url: `/notifications/${notification.id}/read`,
       headers: { authorization: auth },
@@ -244,7 +246,7 @@ describe('PUT /notifications/:id/read', () => {
     const customer = await seedUser({ role: 'customer' });
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
     const ticket = await seedTicket({ orderId: order.id, customerId: customer.id });
-    const auth = await loginAs(app, customer.username);
+    const auth = await loginAs(customer.username);
 
     const notification = await seedNotification({
       customerId: customer.id,
@@ -254,7 +256,7 @@ describe('PUT /notifications/:id/read', () => {
       isRead: false,
     });
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'PUT',
       url: `/notifications/${notification.id}/read`,
       headers: { authorization: auth },
@@ -272,7 +274,7 @@ describe('PUT /notifications/:id/read', () => {
 
   it('marking an already-read notification is idempotent', async () => {
     const customer = await seedUser({ role: 'customer' });
-    const auth = await loginAs(app, customer.username);
+    const auth = await loginAs(customer.username);
 
     const notification = await seedNotification({
       customerId: customer.id,
@@ -280,7 +282,7 @@ describe('PUT /notifications/:id/read', () => {
       isRead: true,
     });
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'PUT',
       url: `/notifications/${notification.id}/read`,
       headers: { authorization: auth },
@@ -295,7 +297,7 @@ describe('PUT /notifications/:id/read', () => {
     const customer = await seedUser({ role: 'customer' });
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
     const ticket = await seedTicket({ orderId: order.id, customerId: customer.id });
-    const auth = await loginAs(app, customer.username);
+    const auth = await loginAs(customer.username);
 
     const notification = await seedNotification({
       customerId: customer.id,
@@ -306,7 +308,7 @@ describe('PUT /notifications/:id/read', () => {
     });
 
     // Mark as read
-    const markRes = await app.inject({
+    const markRes = await inject(url, {
       method: 'PUT',
       url: `/notifications/${notification.id}/read`,
       headers: { authorization: auth },
@@ -314,7 +316,7 @@ describe('PUT /notifications/:id/read', () => {
     expect(markRes.statusCode).toBe(200);
 
     // GET should now exclude it
-    const listRes = await app.inject({
+    const listRes = await inject(url, {
       method: 'GET',
       url: '/notifications',
       headers: { authorization: auth },

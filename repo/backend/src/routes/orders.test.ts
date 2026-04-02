@@ -15,6 +15,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { eq } from 'drizzle-orm';
 import { buildOrderTestApp } from '../test/app.js';
+import { inject } from '../test/client.js';
 import { testDb, runMigrations, clearAllTables, closeDb } from '../test/db.js';
 import {
   seedUser,
@@ -34,11 +35,10 @@ import { tenderSplits } from '../db/schema/tender-splits.js';
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 async function loginAs(
-  app: FastifyInstance,
   username: string,
   password = 'password1234',
 ): Promise<string> {
-  const res = await app.inject({
+  const res = await inject(url, {
     method: 'POST',
     url: '/auth/login',
     payload: { username, password },
@@ -47,17 +47,18 @@ async function loginAs(
   return `Bearer ${res.json().token as string}`;
 }
 
-function authHeader(token: string) {
+function authHeader(token: string): Record<string, string> {
   return token ? { authorization: token } : {};
 }
 
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
 
 let app: FastifyInstance;
+let url: string;
 
 beforeAll(async () => {
   await runMigrations();
-  app = await buildOrderTestApp();
+  ({ app, url } = await buildOrderTestApp());
 });
 
 beforeEach(async () => {
@@ -73,46 +74,46 @@ afterAll(async () => {
 
 describe('POST /orders', () => {
   it('401: requires authentication', async () => {
-    const res = await app.inject({ method: 'POST', url: '/orders' });
+    const res = await inject(url, { method: 'POST', url: '/orders' });
     expect(res.statusCode).toBe(401);
   });
 
   it('404: no active cart', async () => {
     const user = await seedUser();
-    const auth = await loginAs(app, user.username);
-    const res = await app.inject({ method: 'POST', url: '/orders', headers: authHeader(auth) });
+    const auth = await loginAs(user.username);
+    const res = await inject(url, { method: 'POST', url: '/orders', headers: authHeader(auth) });
     expect(res.statusCode).toBe(404);
     expect(res.json().error).toMatch(/no active cart/i);
   });
 
   it('410: expired cart', async () => {
     const user = await seedUser();
-    const auth = await loginAs(app, user.username);
+    const auth = await loginAs(user.username);
     await seedCart({ customerId: user.id, expiresAt: new Date(Date.now() - 1000) });
 
-    const res = await app.inject({ method: 'POST', url: '/orders', headers: authHeader(auth) });
+    const res = await inject(url, { method: 'POST', url: '/orders', headers: authHeader(auth) });
     expect(res.statusCode).toBe(410);
     expect(res.json().error).toMatch(/expired/i);
   });
 
   it('400: empty cart', async () => {
     const user = await seedUser();
-    const auth = await loginAs(app, user.username);
+    const auth = await loginAs(user.username);
     await seedCart({ customerId: user.id });
 
-    const res = await app.inject({ method: 'POST', url: '/orders', headers: authHeader(auth) });
+    const res = await inject(url, { method: 'POST', url: '/orders', headers: authHeader(auth) });
     expect(res.statusCode).toBe(400);
     expect(res.json().error).toMatch(/empty cart/i);
   });
 
   it('201: creates order from active cart — response shape', async () => {
     const user = await seedUser();
-    const auth = await loginAs(app, user.username);
+    const auth = await loginAs(user.username);
     const product = await seedProduct({ price: '19.99', stockQty: 10 });
     const cart = await seedCart({ customerId: user.id });
     await seedCartItem({ cartId: cart.id, productId: product.id, qty: 2 });
 
-    const res = await app.inject({ method: 'POST', url: '/orders', headers: authHeader(auth) });
+    const res = await inject(url, { method: 'POST', url: '/orders', headers: authHeader(auth) });
 
     expect(res.statusCode).toBe(201);
     const body = res.json();
@@ -136,12 +137,12 @@ describe('POST /orders', () => {
 
   it('201: pickupCode is exactly 6 digits', async () => {
     const user = await seedUser();
-    const auth = await loginAs(app, user.username);
+    const auth = await loginAs(user.username);
     const product = await seedProduct({ stockQty: 5 });
     const cart = await seedCart({ customerId: user.id });
     await seedCartItem({ cartId: cart.id, productId: product.id, qty: 1 });
 
-    const res = await app.inject({ method: 'POST', url: '/orders', headers: authHeader(auth) });
+    const res = await inject(url, { method: 'POST', url: '/orders', headers: authHeader(auth) });
 
     expect(res.statusCode).toBe(201);
     expect(res.json().pickupCode).toMatch(/^\d{6}$/);
@@ -149,12 +150,12 @@ describe('POST /orders', () => {
 
   it('201: cart status changes to "converted"', async () => {
     const user = await seedUser();
-    const auth = await loginAs(app, user.username);
+    const auth = await loginAs(user.username);
     const product = await seedProduct({ stockQty: 5 });
     const cart = await seedCart({ customerId: user.id });
     await seedCartItem({ cartId: cart.id, productId: product.id, qty: 1 });
 
-    await app.inject({ method: 'POST', url: '/orders', headers: authHeader(auth) });
+    await inject(url, { method: 'POST', url: '/orders', headers: authHeader(auth) });
 
     const [updatedCart] = await testDb
       .select({ status: orders.status })
@@ -162,19 +163,19 @@ describe('POST /orders', () => {
       .where(eq(orders.customerId, user.id));
     // The cart (not order) status check — let's read from carts table indirectly
     // by confirming a second POST /orders returns 404 (no active cart)
-    const res2 = await app.inject({ method: 'POST', url: '/orders', headers: authHeader(auth) });
+    const res2 = await inject(url, { method: 'POST', url: '/orders', headers: authHeader(auth) });
     expect(res2.statusCode).toBe(404); // cart was converted, no active cart remains
     void updatedCart; // suppress unused warning
   });
 
   it('201: audit log written with action "order.created"', async () => {
     const user = await seedUser();
-    const auth = await loginAs(app, user.username);
+    const auth = await loginAs(user.username);
     const product = await seedProduct({ stockQty: 5 });
     const cart = await seedCart({ customerId: user.id });
     await seedCartItem({ cartId: cart.id, productId: product.id, qty: 1 });
 
-    const res = await app.inject({ method: 'POST', url: '/orders', headers: authHeader(auth) });
+    const res = await inject(url, { method: 'POST', url: '/orders', headers: authHeader(auth) });
     const orderId = res.json().id;
 
     const logs = await testDb
@@ -189,15 +190,15 @@ describe('POST /orders', () => {
 
   it('201: pickupCode is NOT included in subsequent GET /orders/:id', async () => {
     const user = await seedUser();
-    const auth = await loginAs(app, user.username);
+    const auth = await loginAs(user.username);
     const product = await seedProduct({ stockQty: 5 });
     const cart = await seedCart({ customerId: user.id });
     await seedCartItem({ cartId: cart.id, productId: product.id, qty: 1 });
 
-    const createRes = await app.inject({ method: 'POST', url: '/orders', headers: authHeader(auth) });
+    const createRes = await inject(url, { method: 'POST', url: '/orders', headers: authHeader(auth) });
     const orderId = createRes.json().id;
 
-    const getRes = await app.inject({
+    const getRes = await inject(url, {
       method: 'GET',
       url: `/orders/${orderId}`,
       headers: authHeader(auth),
@@ -210,7 +211,7 @@ describe('POST /orders', () => {
 
   it('201: inactive items are cancelled with reason "product_unavailable" and stock released', async () => {
     const user = await seedUser();
-    const auth = await loginAs(app, user.username);
+    const auth = await loginAs(user.username);
     const activeProduct = await seedProduct({ stockQty: 10, name: 'Active Widget' });
     const inactiveProduct = await seedProduct({ stockQty: 5, name: 'Gone Widget' });
     const cart = await seedCart({ customerId: user.id });
@@ -223,7 +224,7 @@ describe('POST /orders', () => {
       .set({ isActive: false })
       .where(eq(products.id, inactiveProduct.id));
 
-    const res = await app.inject({ method: 'POST', url: '/orders', headers: authHeader(auth) });
+    const res = await inject(url, { method: 'POST', url: '/orders', headers: authHeader(auth) });
 
     expect(res.statusCode).toBe(201);
     const body = res.json();
@@ -249,13 +250,13 @@ describe('POST /orders', () => {
 
   it('409: all items inactive', async () => {
     const user = await seedUser();
-    const auth = await loginAs(app, user.username);
+    const auth = await loginAs(user.username);
     const product = await seedProduct({ stockQty: 5 });
     const cart = await seedCart({ customerId: user.id });
     await seedCartItem({ cartId: cart.id, productId: product.id, qty: 1 });
     await testDb.update(products).set({ isActive: false }).where(eq(products.id, product.id));
 
-    const res = await app.inject({ method: 'POST', url: '/orders', headers: authHeader(auth) });
+    const res = await inject(url, { method: 'POST', url: '/orders', headers: authHeader(auth) });
     expect(res.statusCode).toBe(409);
     expect(res.json().error).toMatch(/no longer available/i);
   });
@@ -265,15 +266,15 @@ describe('POST /orders', () => {
 
 describe('GET /orders', () => {
   it('401: requires authentication', async () => {
-    const res = await app.inject({ method: 'GET', url: '/orders' });
+    const res = await inject(url, { method: 'GET', url: '/orders' });
     expect(res.statusCode).toBe(401);
   });
 
   it('200: empty list when no orders', async () => {
     const user = await seedUser();
-    const auth = await loginAs(app, user.username);
+    const auth = await loginAs(user.username);
 
-    const res = await app.inject({ method: 'GET', url: '/orders', headers: authHeader(auth) });
+    const res = await inject(url, { method: 'GET', url: '/orders', headers: authHeader(auth) });
 
     expect(res.statusCode).toBe(200);
     const body = res.json();
@@ -285,11 +286,11 @@ describe('GET /orders', () => {
 
   it('200: returns own orders with correct shape', async () => {
     const user = await seedUser();
-    const auth = await loginAs(app, user.username);
+    const auth = await loginAs(user.username);
     await seedOrder({ customerId: user.id });
     await seedOrder({ customerId: user.id });
 
-    const res = await app.inject({ method: 'GET', url: '/orders', headers: authHeader(auth) });
+    const res = await inject(url, { method: 'GET', url: '/orders', headers: authHeader(auth) });
 
     expect(res.statusCode).toBe(200);
     const body = res.json();
@@ -311,8 +312,8 @@ describe('GET /orders', () => {
     await seedOrder({ customerId: u1.id });
     await seedOrder({ customerId: u2.id });
 
-    const auth1 = await loginAs(app, u1.username);
-    const res = await app.inject({ method: 'GET', url: '/orders', headers: authHeader(auth1) });
+    const auth1 = await loginAs(u1.username);
+    const res = await inject(url, { method: 'GET', url: '/orders', headers: authHeader(auth1) });
 
     expect(res.statusCode).toBe(200);
     expect(res.json().total).toBe(1);
@@ -321,10 +322,10 @@ describe('GET /orders', () => {
 
   it('200: pagination — limit and offset', async () => {
     const user = await seedUser();
-    const auth = await loginAs(app, user.username);
+    const auth = await loginAs(user.username);
     for (let i = 0; i < 3; i++) await seedOrder({ customerId: user.id });
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'GET',
       url: '/orders?limit=2&offset=0',
       headers: authHeader(auth),
@@ -343,14 +344,14 @@ describe('GET /orders', () => {
 
 describe('GET /orders/:id', () => {
   it('401: requires authentication', async () => {
-    const res = await app.inject({ method: 'GET', url: '/orders/00000000-0000-0000-0000-000000000001' });
+    const res = await inject(url, { method: 'GET', url: '/orders/00000000-0000-0000-0000-000000000001' });
     expect(res.statusCode).toBe(401);
   });
 
   it('404: order not found', async () => {
     const user = await seedUser();
-    const auth = await loginAs(app, user.username);
-    const res = await app.inject({
+    const auth = await loginAs(user.username);
+    const res = await inject(url, {
       method: 'GET',
       url: '/orders/00000000-0000-0000-0000-000000000001',
       headers: authHeader(auth),
@@ -363,8 +364,8 @@ describe('GET /orders/:id', () => {
     const other = await seedUser({ username: 'other_ord' });
     const order = await seedOrder({ customerId: owner.id });
 
-    const otherAuth = await loginAs(app, other.username);
-    const res = await app.inject({
+    const otherAuth = await loginAs(other.username);
+    const res = await inject(url, {
       method: 'GET',
       url: `/orders/${order.id}`,
       headers: authHeader(otherAuth),
@@ -374,12 +375,12 @@ describe('GET /orders/:id', () => {
 
   it('200: customer can view own order — full detail shape', async () => {
     const user = await seedUser();
-    const auth = await loginAs(app, user.username);
+    const auth = await loginAs(user.username);
     const product = await seedProduct({ name: 'Test Widget', price: '14.99' });
     const order = await seedOrder({ customerId: user.id });
     await seedOrderItem({ orderId: order.id, productId: product.id, qty: 2, unitPrice: '14.99' });
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'GET',
       url: `/orders/${order.id}`,
       headers: authHeader(auth),
@@ -411,8 +412,8 @@ describe('GET /orders/:id', () => {
     const associate = await seedUser({ username: 'assoc_viewtest', role: 'associate' });
     const order = await seedOrder({ customerId: customer.id });
 
-    const assocAuth = await loginAs(app, associate.username);
-    const res = await app.inject({
+    const assocAuth = await loginAs(associate.username);
+    const res = await inject(url, {
       method: 'GET',
       url: `/orders/${order.id}`,
       headers: authHeader(assocAuth),
@@ -423,8 +424,8 @@ describe('GET /orders/:id', () => {
 
   it('400: non-UUID id returns 400', async () => {
     const user = await seedUser();
-    const auth = await loginAs(app, user.username);
-    const res = await app.inject({
+    const auth = await loginAs(user.username);
+    const res = await inject(url, {
       method: 'GET',
       url: '/orders/not-a-uuid',
       headers: authHeader(auth),
@@ -434,11 +435,11 @@ describe('GET /orders/:id', () => {
 
   it('200: includes tender splits when present', async () => {
     const user = await seedUser();
-    const auth = await loginAs(app, user.username);
+    const auth = await loginAs(user.username);
     const order = await seedOrder({ customerId: user.id });
     await seedTenderSplit({ orderId: order.id, method: 'cash', amount: '20.00' });
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'GET',
       url: `/orders/${order.id}`,
       headers: authHeader(auth),
@@ -453,7 +454,7 @@ describe('GET /orders/:id', () => {
 
 describe('POST /orders/:id/tender', () => {
   it('401: requires authentication', async () => {
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: '/orders/00000000-0000-0000-0000-000000000001/tender',
       payload: { method: 'cash', amount: '10.00' },
@@ -464,9 +465,9 @@ describe('POST /orders/:id/tender', () => {
   it('403: customer role cannot record tender', async () => {
     const customer = await seedUser({ username: 'cust_tender' });
     const order = await seedOrder({ customerId: customer.id });
-    const auth = await loginAs(app, customer.username);
+    const auth = await loginAs(customer.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/orders/${order.id}/tender`,
       headers: authHeader(auth),
@@ -477,9 +478,9 @@ describe('POST /orders/:id/tender', () => {
 
   it('404: order not found', async () => {
     const associate = await seedUser({ username: 'assoc_tender1', role: 'associate' });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: '/orders/00000000-0000-0000-0000-000000000001/tender',
       headers: authHeader(auth),
@@ -492,9 +493,9 @@ describe('POST /orders/:id/tender', () => {
     const customer = await seedUser({ username: 'cust_cash' });
     const associate = await seedUser({ username: 'assoc_cash', role: 'associate' });
     const order = await seedOrder({ customerId: customer.id });
-    const assocAuth = await loginAs(app, associate.username);
+    const assocAuth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/orders/${order.id}/tender`,
       headers: authHeader(assocAuth),
@@ -517,9 +518,9 @@ describe('POST /orders/:id/tender', () => {
     const customer = await seedUser({ username: 'cust_card' });
     const associate = await seedUser({ username: 'assoc_card', role: 'associate' });
     const order = await seedOrder({ customerId: customer.id });
-    const assocAuth = await loginAs(app, associate.username);
+    const assocAuth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/orders/${order.id}/tender`,
       headers: authHeader(assocAuth),
@@ -534,9 +535,9 @@ describe('POST /orders/:id/tender', () => {
     const customer = await seedUser({ username: 'cust_auditend' });
     const associate = await seedUser({ username: 'assoc_audittender', role: 'associate' });
     const order = await seedOrder({ customerId: customer.id });
-    const assocAuth = await loginAs(app, associate.username);
+    const assocAuth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/orders/${order.id}/tender`,
       headers: authHeader(assocAuth),
@@ -557,9 +558,9 @@ describe('POST /orders/:id/tender', () => {
     const customer = await seedUser({ username: 'cust_noref' });
     const associate = await seedUser({ username: 'assoc_noref', role: 'associate' });
     const order = await seedOrder({ customerId: customer.id });
-    const assocAuth = await loginAs(app, associate.username);
+    const assocAuth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/orders/${order.id}/tender`,
       headers: authHeader(assocAuth),
@@ -572,9 +573,9 @@ describe('POST /orders/:id/tender', () => {
     const customer = await seedUser({ username: 'cust_cashref' });
     const associate = await seedUser({ username: 'assoc_cashref', role: 'associate' });
     const order = await seedOrder({ customerId: customer.id });
-    const assocAuth = await loginAs(app, associate.username);
+    const assocAuth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/orders/${order.id}/tender`,
       headers: authHeader(assocAuth),
@@ -587,9 +588,9 @@ describe('POST /orders/:id/tender', () => {
     const customer = await seedUser({ username: 'cust_zeroamt' });
     const associate = await seedUser({ username: 'assoc_zeroamt', role: 'associate' });
     const order = await seedOrder({ customerId: customer.id });
-    const assocAuth = await loginAs(app, associate.username);
+    const assocAuth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/orders/${order.id}/tender`,
       headers: authHeader(assocAuth),
@@ -602,9 +603,9 @@ describe('POST /orders/:id/tender', () => {
     const customer = await seedUser({ username: 'cust_eur' });
     const associate = await seedUser({ username: 'assoc_eur', role: 'associate' });
     const order = await seedOrder({ customerId: customer.id });
-    const assocAuth = await loginAs(app, associate.username);
+    const assocAuth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/orders/${order.id}/tender`,
       headers: authHeader(assocAuth),
@@ -620,9 +621,9 @@ describe('POST /orders/:id/tender', () => {
     const customer = await seedUser({ username: 'cust_usd' });
     const associate = await seedUser({ username: 'assoc_usd', role: 'associate' });
     const order = await seedOrder({ customerId: customer.id });
-    const assocAuth = await loginAs(app, associate.username);
+    const assocAuth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/orders/${order.id}/tender`,
       headers: authHeader(assocAuth),
@@ -635,9 +636,9 @@ describe('POST /orders/:id/tender', () => {
     const customer = await seedUser({ username: 'cust_pickedup' });
     const associate = await seedUser({ username: 'assoc_pickedup', role: 'associate' });
     const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
-    const assocAuth = await loginAs(app, associate.username);
+    const assocAuth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/orders/${order.id}/tender`,
       headers: authHeader(assocAuth),
@@ -650,9 +651,9 @@ describe('POST /orders/:id/tender', () => {
     const customer = await seedUser({ username: 'cust_cancelled' });
     const associate = await seedUser({ username: 'assoc_cancelled', role: 'associate' });
     const order = await seedOrder({ customerId: customer.id, status: 'cancelled' });
-    const assocAuth = await loginAs(app, associate.username);
+    const assocAuth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/orders/${order.id}/tender`,
       headers: authHeader(assocAuth),
@@ -666,7 +667,7 @@ describe('POST /orders/:id/tender', () => {
 
 describe('POST /orders/:id/confirm', () => {
   it('401: requires authentication', async () => {
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: '/orders/00000000-0000-0000-0000-000000000001/confirm',
     });
@@ -676,9 +677,9 @@ describe('POST /orders/:id/confirm', () => {
   it('403: customer role cannot confirm', async () => {
     const customer = await seedUser({ username: 'cust_conf' });
     const order = await seedOrder({ customerId: customer.id });
-    const auth = await loginAs(app, customer.username);
+    const auth = await loginAs(customer.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/orders/${order.id}/confirm`,
       headers: authHeader(auth),
@@ -688,9 +689,9 @@ describe('POST /orders/:id/confirm', () => {
 
   it('404: order not found', async () => {
     const associate = await seedUser({ username: 'assoc_conf404', role: 'associate' });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: '/orders/00000000-0000-0000-0000-000000000001/confirm',
       headers: authHeader(auth),
@@ -702,9 +703,9 @@ describe('POST /orders/:id/confirm', () => {
     const customer = await seedUser({ username: 'cust_confstatus' });
     const associate = await seedUser({ username: 'assoc_confstatus', role: 'associate' });
     const order = await seedOrder({ customerId: customer.id, status: 'confirmed' });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/orders/${order.id}/confirm`,
       headers: authHeader(auth),
@@ -719,9 +720,9 @@ describe('POST /orders/:id/confirm', () => {
     const product = await seedProduct({ price: '10.00' });
     const order = await seedOrder({ customerId: customer.id });
     await seedOrderItem({ orderId: order.id, productId: product.id, qty: 1, unitPrice: '10.00' });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/orders/${order.id}/confirm`,
       headers: authHeader(auth),
@@ -738,9 +739,9 @@ describe('POST /orders/:id/confirm', () => {
     await seedOrderItem({ orderId: order.id, productId: product.id, qty: 2, unitPrice: '19.99' });
     // Order total = $39.98; tender = $10.00 (mismatch)
     await seedTenderSplit({ orderId: order.id, method: 'cash', amount: '10.00' });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/orders/${order.id}/confirm`,
       headers: authHeader(auth),
@@ -757,9 +758,9 @@ describe('POST /orders/:id/confirm', () => {
     await seedOrderItem({ orderId: order.id, productId: product.id, qty: 2, unitPrice: '9.99' });
     // Order total = $19.98
     await seedTenderSplit({ orderId: order.id, method: 'cash', amount: '19.98' });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/orders/${order.id}/confirm`,
       headers: authHeader(auth),
@@ -795,9 +796,9 @@ describe('POST /orders/:id/confirm', () => {
     // Split: $20 cash + $10 card
     await seedTenderSplit({ orderId: order.id, method: 'cash', amount: '20.00' });
     await seedTenderSplit({ orderId: order.id, method: 'card', amount: '10.00', reference: 'TXN-SPLIT' });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/orders/${order.id}/confirm`,
       headers: authHeader(auth),
@@ -811,7 +812,7 @@ describe('POST /orders/:id/confirm', () => {
 
 describe('POST /orders/:id/pickup/verify', () => {
   it('401: requires authentication', async () => {
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: '/orders/00000000-0000-0000-0000-000000000001/pickup/verify',
       payload: { code: '123456' },
@@ -822,9 +823,9 @@ describe('POST /orders/:id/pickup/verify', () => {
   it('403: customer role cannot verify pickup', async () => {
     const customer = await seedUser({ username: 'cust_pv403' });
     const { order } = await seedOrderWithCode({ customerId: customer.id });
-    const auth = await loginAs(app, customer.username);
+    const auth = await loginAs(customer.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/orders/${order.id}/pickup/verify`,
       headers: authHeader(auth),
@@ -835,9 +836,9 @@ describe('POST /orders/:id/pickup/verify', () => {
 
   it('404: order not found', async () => {
     const associate = await seedUser({ username: 'assoc_pv404', role: 'associate' });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: '/orders/00000000-0000-0000-0000-000000000001/pickup/verify',
       headers: authHeader(auth),
@@ -850,9 +851,9 @@ describe('POST /orders/:id/pickup/verify', () => {
     const customer = await seedUser({ username: 'cust_pvwrongstatus' });
     const associate = await seedUser({ username: 'assoc_pvwrongstatus', role: 'associate' });
     const order = await seedOrder({ customerId: customer.id, status: 'pending' });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/orders/${order.id}/pickup/verify`,
       headers: authHeader(auth),
@@ -866,9 +867,9 @@ describe('POST /orders/:id/pickup/verify', () => {
     const customer = await seedUser({ username: 'cust_pvbadcode' });
     const associate = await seedUser({ username: 'assoc_pvbadcode', role: 'associate' });
     const { order } = await seedOrderWithCode({ customerId: customer.id });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/orders/${order.id}/pickup/verify`,
       headers: authHeader(auth),
@@ -881,9 +882,9 @@ describe('POST /orders/:id/pickup/verify', () => {
     const customer = await seedUser({ username: 'cust_pvcorrect' });
     const associate = await seedUser({ username: 'assoc_pvcorrect', role: 'associate' });
     const { order, pickupCodePlain } = await seedOrderWithCode({ customerId: customer.id });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/orders/${order.id}/pickup/verify`,
       headers: authHeader(auth),
@@ -904,9 +905,9 @@ describe('POST /orders/:id/pickup/verify', () => {
     const customer = await seedUser({ username: 'cust_pvaudit' });
     const associate = await seedUser({ username: 'assoc_pvaudit', role: 'associate' });
     const { order, pickupCodePlain } = await seedOrderWithCode({ customerId: customer.id });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
-    await app.inject({
+    await inject(url, {
       method: 'POST',
       url: `/orders/${order.id}/pickup/verify`,
       headers: authHeader(auth),
@@ -924,9 +925,9 @@ describe('POST /orders/:id/pickup/verify', () => {
     const customer = await seedUser({ username: 'cust_pvwrong' });
     const associate = await seedUser({ username: 'assoc_pvwrong', role: 'associate' });
     const { order } = await seedOrderWithCode({ customerId: customer.id });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/orders/${order.id}/pickup/verify`,
       headers: authHeader(auth),
@@ -949,9 +950,9 @@ describe('POST /orders/:id/pickup/verify', () => {
     const associate = await seedUser({ username: 'assoc_pvlock', role: 'associate' });
     // Start with 4 failed attempts already
     const { order } = await seedOrderWithCode({ customerId: customer.id, pickupAttempts: 4 });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/orders/${order.id}/pickup/verify`,
       headers: authHeader(auth),
@@ -973,9 +974,9 @@ describe('POST /orders/:id/pickup/verify', () => {
     const customer = await seedUser({ username: 'cust_pvalready' });
     const associate = await seedUser({ username: 'assoc_pvalready', role: 'associate' });
     const { order } = await seedOrderWithCode({ customerId: customer.id, status: 'pickup_locked' });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/orders/${order.id}/pickup/verify`,
       headers: authHeader(auth),
@@ -992,7 +993,7 @@ describe('POST /orders/:id/pickup/manager-override', () => {
   const MANAGER_PASSWORD = 'manager_password1234';
 
   it('401: requires authentication', async () => {
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: '/orders/00000000-0000-0000-0000-000000000001/pickup/manager-override',
       payload: { managerUsername: 'mgr', managerPassword: 'x' },
@@ -1002,9 +1003,9 @@ describe('POST /orders/:id/pickup/manager-override', () => {
 
   it('404: order not found', async () => {
     const associate = await seedUser({ username: 'assoc_mo404', role: 'associate' });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: '/orders/00000000-0000-0000-0000-000000000001/pickup/manager-override',
       headers: authHeader(auth),
@@ -1017,9 +1018,9 @@ describe('POST /orders/:id/pickup/manager-override', () => {
     const customer = await seedUser({ username: 'cust_mowrong' });
     const associate = await seedUser({ username: 'assoc_mowrong', role: 'associate' });
     const order = await seedOrder({ customerId: customer.id, status: 'ready_for_pickup' });
-    const auth = await loginAs(app, associate.username);
+    const auth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/orders/${order.id}/pickup/manager-override`,
       headers: authHeader(auth),
@@ -1034,9 +1035,9 @@ describe('POST /orders/:id/pickup/manager-override', () => {
     const manager = await seedUser({ username: 'mgr_wrongpw', role: 'manager', password: MANAGER_PASSWORD });
     const associate = await seedUser({ username: 'assoc_mowrongpw', role: 'associate' });
     const { order } = await seedOrderWithCode({ customerId: customer.id, status: 'pickup_locked' });
-    const assocAuth = await loginAs(app, associate.username);
+    const assocAuth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/orders/${order.id}/pickup/manager-override`,
       headers: authHeader(assocAuth),
@@ -1051,9 +1052,9 @@ describe('POST /orders/:id/pickup/manager-override', () => {
     const associate = await seedUser({ username: 'assoc_override', role: 'associate', password: MANAGER_PASSWORD });
     const actor = await seedUser({ username: 'actor_assoc', role: 'associate' });
     const { order } = await seedOrderWithCode({ customerId: customer.id, status: 'pickup_locked' });
-    const actorAuth = await loginAs(app, actor.username);
+    const actorAuth = await loginAs(actor.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/orders/${order.id}/pickup/manager-override`,
       headers: authHeader(actorAuth),
@@ -1073,9 +1074,9 @@ describe('POST /orders/:id/pickup/manager-override', () => {
     });
     const associate = await seedUser({ username: 'assoc_molocked', role: 'associate' });
     const { order } = await seedOrderWithCode({ customerId: customer.id, status: 'pickup_locked' });
-    const assocAuth = await loginAs(app, associate.username);
+    const assocAuth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/orders/${order.id}/pickup/manager-override`,
       headers: authHeader(assocAuth),
@@ -1090,9 +1091,9 @@ describe('POST /orders/:id/pickup/manager-override', () => {
     const manager = await seedUser({ username: 'mgr_pass', role: 'manager', password: MANAGER_PASSWORD });
     const associate = await seedUser({ username: 'assoc_mopass', role: 'associate' });
     const { order } = await seedOrderWithCode({ customerId: customer.id, status: 'pickup_locked' });
-    const assocAuth = await loginAs(app, associate.username);
+    const assocAuth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/orders/${order.id}/pickup/manager-override`,
       headers: authHeader(assocAuth),
@@ -1124,9 +1125,9 @@ describe('POST /orders/:id/pickup/manager-override', () => {
     const admin = await seedUser({ username: 'admin_override', role: 'admin', password: MANAGER_PASSWORD });
     const associate = await seedUser({ username: 'assoc_moadmin', role: 'associate' });
     const { order } = await seedOrderWithCode({ customerId: customer.id, status: 'pickup_locked' });
-    const assocAuth = await loginAs(app, associate.username);
+    const assocAuth = await loginAs(associate.username);
 
-    const res = await app.inject({
+    const res = await inject(url, {
       method: 'POST',
       url: `/orders/${order.id}/pickup/manager-override`,
       headers: authHeader(assocAuth),
