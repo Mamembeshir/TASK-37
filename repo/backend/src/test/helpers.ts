@@ -367,6 +367,7 @@ export async function seedRule(opts: {
   definitionJson?: RuleDefinition;
   adminComment?: string;
   createdBy: string;
+  publishedAt?: Date | null;
 }) {
   const {
     name = `rule_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
@@ -375,10 +376,19 @@ export async function seedRule(opts: {
     definitionJson = MINIMAL_RULE_DEF,
     adminComment = 'Initial version',
     createdBy,
+    publishedAt = status === 'active' ? new Date() : null,
   } = opts;
   const [rule] = await testDb
     .insert(rules)
-    .values({ name, status, version, definitionJson, adminComment, createdBy })
+    .values({
+      name,
+      status,
+      version,
+      definitionJson,
+      adminComment,
+      createdBy,
+      publishedAt: publishedAt ?? undefined,
+    })
     .returning();
   return rule!;
 }
@@ -390,6 +400,7 @@ export async function seedRuleHistory(opts: {
   definitionJson?: RuleDefinition;
   adminComment?: string;
   createdBy: string;
+  publishedAt?: Date | null;
 }) {
   const {
     ruleId,
@@ -398,10 +409,19 @@ export async function seedRuleHistory(opts: {
     definitionJson = MINIMAL_RULE_DEF,
     adminComment = 'Archived version',
     createdBy,
+    publishedAt = status === 'active' ? new Date() : null,
   } = opts;
   const [hist] = await testDb
     .insert(rulesHistory)
-    .values({ ruleId, version, status, definitionJson, adminComment, createdBy })
+    .values({
+      ruleId,
+      version,
+      status,
+      definitionJson,
+      adminComment,
+      createdBy,
+      publishedAt: publishedAt ?? undefined,
+    })
     .returning();
   return hist!;
 }

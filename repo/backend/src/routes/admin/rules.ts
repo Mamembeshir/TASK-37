@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { ZodTypeProvider } from 'fastify-type-provider-zod';
-import { count, desc, eq } from 'drizzle-orm';
+import { and, count, desc, eq, isNotNull } from 'drizzle-orm';
 import { z, uuidParam, paginationQuery } from '../../lib/zod';
 import { rules, rulesHistory } from '../../db/schema/rules';
 import { auditLogs } from '../../db/schema/audit-logs';
@@ -348,7 +348,13 @@ async function adminRulesRoutes(fastify: FastifyInstance) {
       const [previousPublished] = await app.db
         .select()
         .from(rulesHistory)
-        .where(eq(rulesHistory.ruleId, id))
+        .where(
+          and(
+            eq(rulesHistory.ruleId, id),
+            eq(rulesHistory.status, 'active'),
+            isNotNull(rulesHistory.publishedAt),
+          ),
+        )
         .orderBy(desc(rulesHistory.archivedAt))
         .limit(1);
 

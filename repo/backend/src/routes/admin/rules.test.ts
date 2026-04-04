@@ -536,6 +536,54 @@ describe('POST /admin/rules/:id/rollback', () => {
     expect((json.definitionJson as any).actions[0].type).toBe('restore_action');
   });
 
+  it('restores the latest previously published version, not just the latest archived row', async () => {
+    const admin = await seedUser({ role: 'admin' });
+    const publishedDef: RuleDefinition = {
+      ...MINIMAL_RULE_DEF,
+      actions: [{ type: 'restore_published', params: { ok: true } }],
+    };
+    const draftDef: RuleDefinition = {
+      ...MINIMAL_RULE_DEF,
+      actions: [{ type: 'restore_draft', params: { shouldNotRestore: true } }],
+    };
+
+    const rule = await seedRule({ version: 3, status: 'active', createdBy: admin.id });
+
+    // Older, previously published snapshot (should be selected)
+    await seedRuleHistory({
+      ruleId: rule.id,
+      version: 1,
+      status: 'active',
+      definitionJson: publishedDef,
+      createdBy: admin.id,
+      publishedAt: new Date('2026-01-10T00:00:00.000Z'),
+    });
+
+    // Newer archived snapshot that was never published (must be ignored)
+    await seedRuleHistory({
+      ruleId: rule.id,
+      version: 2,
+      status: 'draft',
+      definitionJson: draftDef,
+      createdBy: admin.id,
+      publishedAt: null,
+    });
+
+    const auth = await loginAs(admin.username);
+
+    const res = await inject(url, {
+      method: 'POST',
+      url: `/admin/rules/${rule.id}/rollback`,
+      headers: { authorization: auth },
+      payload: { adminComment: 'Rollback to previous published' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const json = res.json();
+    expect((json.definitionJson as any).actions[0].type).toBe('restore_published');
+    expect((json.definitionJson as any).actions[0].type).not.toBe('restore_draft');
+  });
+
   it('archives current version to rules_history during rollback', async () => {
     const admin = await seedUser({ role: 'admin' });
     const rule = await seedRule({ version: 2, status: 'active', createdBy: admin.id });

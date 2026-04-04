@@ -21,6 +21,7 @@ import {
 
 /** Default return/refund eligibility window in days (Q3 confirmed). */
 const DEFAULT_WINDOW_DAYS = 30;
+const EXTENDED_WINDOW_DAYS = 60;
 
 /** Terminal statuses — no further state transitions allowed. */
 const TERMINAL_STATUSES = ['resolved', 'cancelled'] as const;
@@ -66,6 +67,12 @@ const ticketDetailOut = ticketOut.extend({
 
 async function ticketRoutes(fastify: FastifyInstance) {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
+
+  function orderAgeExceededWindow(orderCreatedAt: Date, windowDays: number): boolean {
+    const ageMs = Date.now() - orderCreatedAt.getTime();
+    const windowMs = windowDays * 24 * 60 * 60 * 1000;
+    return ageMs > windowMs;
+  }
 
   /**
    * POST /tickets
@@ -131,11 +138,9 @@ async function ticketRoutes(fastify: FastifyInstance) {
         return sendError(reply, 409, 'After-sales tickets can only be opened for picked-up orders.');
       }
 
-      // Return/refund eligibility window (Q3: 30 days from order creation).
+      // Return/refund eligibility window (default 30 days from order creation).
       if (type === 'return' || type === 'refund') {
-        const ageMs = Date.now() - order.createdAt.getTime();
-        const windowMs = DEFAULT_WINDOW_DAYS * 24 * 60 * 60 * 1000;
-        if (ageMs > windowMs) {
+        if (orderAgeExceededWindow(order.createdAt, DEFAULT_WINDOW_DAYS)) {
           return sendError(reply, 409, `The ${DEFAULT_WINDOW_DAYS}-day ${type} window has expired for this order.`);
         }
       }
@@ -201,6 +206,90 @@ async function ticketRoutes(fastify: FastifyInstance) {
         createdAt: ticket.createdAt.toISOString(),
         updatedAt: ticket.updatedAt.toISOString(),
       });
+    },
+  );
+
+  /**
+   * POST /tickets/:id/extend-window
+   *
+   * Manager override for return/refund tickets: extend eligibility from 30 to
+   * 60 days (Q3). Applies only to non-terminal tickets.
+   */
+  app.post(
+    '/:id/extend-window',
+    {
+      preHandler: [app.requireAuth, app.requireRole('manager', 'admin')],
+      schema: {
+        params: uuidParam,
+        body: z.object({
+          note: z.string().max(2000).optional(),
+        }),
+        response: { 200: ticketOut },
+      },
+    },
+    async (req, reply) => {
+      const actorId = req.user!.id;
+      const { id } = req.params;
+
+      const [ticket] = await app.db
+        .select()
+        .from(afterSalesTickets)
+        .where(eq(afterSalesTickets.id, id))
+        .limit(1);
+
+      if (!ticket) return sendError(reply, 404, 'Ticket not found.');
+      if (ticket.type !== 'return' && ticket.type !== 'refund') {
+        return sendError(reply, 409, 'Window extension is only supported for return/refund tickets.');
+      }
+      if (TERMINAL_STATUSES.includes(ticket.status as (typeof TERMINAL_STATUSES)[number])) {
+        return sendError(reply, 409, `Cannot extend a ticket in terminal status '${ticket.status}'.`);
+      }
+      if (ticket.windowDays >= EXTENDED_WINDOW_DAYS) {
+        return sendError(reply, 409, `Ticket window is already ${EXTENDED_WINDOW_DAYS} days.`);
+      }
+
+      const [order] = await app.db
+        .select({ createdAt: orders.createdAt })
+        .from(orders)
+        .where(eq(orders.id, ticket.orderId))
+        .limit(1);
+
+      if (!order) return sendError(reply, 404, 'Order not found.');
+      if (orderAgeExceededWindow(order.createdAt, EXTENDED_WINDOW_DAYS)) {
+        return sendError(reply, 409, `The ${EXTENDED_WINDOW_DAYS}-day extension window has expired for this order.`);
+      }
+
+      const now = new Date();
+      const [updated] = await app.db.transaction(async (tx) => {
+        const event = await appendTicketEvent(tx, {
+          ticketId: id,
+          actorId,
+          eventType: 'note_added',
+          note:
+            req.body.note?.trim() ||
+            `Eligibility window extended from ${ticket.windowDays} to ${EXTENDED_WINDOW_DAYS} days by manager override.`,
+        });
+
+        const rows = await tx
+          .update(afterSalesTickets)
+          .set({ windowDays: EXTENDED_WINDOW_DAYS, updatedAt: now })
+          .where(eq(afterSalesTickets.id, id))
+          .returning();
+
+        await tx.insert(auditLogs).values({
+          actorId,
+          action: 'ticket.window_extended',
+          entityType: 'ticket',
+          entityId: id,
+          before: { windowDays: ticket.windowDays },
+          after: { windowDays: EXTENDED_WINDOW_DAYS },
+          nodeDurationMs: event.nodeDurationMs ?? null,
+        });
+
+        return rows;
+      });
+
+      return reply.send(toTicketOut(updated));
     },
   );
 
@@ -651,6 +740,24 @@ async function ticketRoutes(fastify: FastifyInstance) {
       if (!ticket) return sendError(reply, 404, 'Ticket not found.');
       if (ticket.status !== 'in_progress' && ticket.status !== 'pending_inspection') {
         return sendError(reply, 409, `Resolve requires status 'in_progress' or 'pending_inspection' (current: '${ticket.status}').`);
+      }
+
+      if (ticket.type === 'return' || ticket.type === 'refund') {
+        const [order] = await app.db
+          .select({ createdAt: orders.createdAt })
+          .from(orders)
+          .where(eq(orders.id, ticket.orderId))
+          .limit(1);
+
+        if (!order) return sendError(reply, 404, 'Order not found.');
+
+        if (orderAgeExceededWindow(order.createdAt, ticket.windowDays)) {
+          return sendError(
+            reply,
+            409,
+            `The ${ticket.windowDays}-day ${ticket.type} window has expired for this order. Manager extension is required before resolution.`,
+          );
+        }
       }
 
       // Rules engine: enforce $50/order cap (Q3). 'block' action vetoes;

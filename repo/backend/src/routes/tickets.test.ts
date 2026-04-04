@@ -7,6 +7,7 @@
  *   POST   /tickets/:id/triage
  *   POST   /tickets/:id/reassign
  *   POST   /tickets/:id/interrupt
+ *   POST   /tickets/:id/extend-window
  *   POST   /tickets/:id/resolve
  *   GET    /tickets/:id/timeline
  */
@@ -29,6 +30,7 @@ import { afterSalesTickets } from '../db/schema/after-sales-tickets.js';
 import { ticketEvents } from '../db/schema/ticket-events.js';
 import { notifications } from '../db/schema/notifications.js';
 import { auditLogs } from '../db/schema/audit-logs.js';
+import { orders } from '../db/schema/orders.js';
 import type { FastifyInstance } from 'fastify';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -880,6 +882,150 @@ describe('POST /tickets/:id/resolve', () => {
     });
     expect(res.statusCode).toBe(422);
     expect(res.json().error).toMatch(/rules engine|block/i);
+  });
+
+  it('returns 409 when return/refund resolution is beyond ticket window', async () => {
+    const customer = await seedUser({ role: 'customer' });
+    const associate = await seedUser({ role: 'associate' });
+    const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
+    const ticket = await seedTicket({
+      orderId: order.id,
+      customerId: customer.id,
+      type: 'return',
+      status: 'in_progress',
+      windowDays: 30,
+    });
+
+    await testDb
+      .update(orders)
+      .set({ createdAt: new Date(Date.now() - 31 * 24 * 60 * 60 * 1000) })
+      .where(eq(orders.id, order.id));
+
+    const auth = await loginAs(associate.username);
+
+    const res = await inject(url, {
+      method: 'POST',
+      url: `/tickets/${ticket.id}/resolve`,
+      headers: { authorization: auth },
+      payload: { outcome: 'approved' },
+    });
+
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error).toMatch(/extension is required|window has expired/i);
+  });
+
+  it('allows resolution after manager extends window to 60 days', async () => {
+    const customer = await seedUser({ role: 'customer' });
+    const associate = await seedUser({ role: 'associate' });
+    const manager = await seedUser({ role: 'manager' });
+    const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
+    const ticket = await seedTicket({
+      orderId: order.id,
+      customerId: customer.id,
+      type: 'refund',
+      status: 'in_progress',
+      windowDays: 30,
+    });
+
+    await testDb
+      .update(orders)
+      .set({ createdAt: new Date(Date.now() - 45 * 24 * 60 * 60 * 1000) })
+      .where(eq(orders.id, order.id));
+
+    const managerAuth = await loginAs(manager.username);
+    const extendRes = await inject(url, {
+      method: 'POST',
+      url: `/tickets/${ticket.id}/extend-window`,
+      headers: { authorization: managerAuth },
+      payload: { note: 'Approve extension to 60 days' },
+    });
+    expect(extendRes.statusCode).toBe(200);
+    expect(extendRes.json().windowDays).toBe(60);
+
+    const associateAuth = await loginAs(associate.username);
+    const resolveRes = await inject(url, {
+      method: 'POST',
+      url: `/tickets/${ticket.id}/resolve`,
+      headers: { authorization: associateAuth },
+      payload: { outcome: 'approved' },
+    });
+
+    expect(resolveRes.statusCode).toBe(200);
+    expect(resolveRes.json().status).toBe('resolved');
+  });
+});
+
+// ── POST /tickets/:id/extend-window ───────────────────────────────────────────
+
+describe('POST /tickets/:id/extend-window', () => {
+  it('returns 403 for associate role', async () => {
+    const customer = await seedUser({ role: 'customer' });
+    const associate = await seedUser({ role: 'associate' });
+    const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
+    const ticket = await seedTicket({ orderId: order.id, customerId: customer.id, type: 'return', status: 'open' });
+    const auth = await loginAs(associate.username);
+
+    const res = await inject(url, {
+      method: 'POST',
+      url: `/tickets/${ticket.id}/extend-window`,
+      headers: { authorization: auth },
+      payload: { note: 'please extend' },
+    });
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('extends return/refund ticket window to 60 days for manager (200)', async () => {
+    const customer = await seedUser({ role: 'customer' });
+    const manager = await seedUser({ role: 'manager' });
+    const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
+    const ticket = await seedTicket({ orderId: order.id, customerId: customer.id, type: 'refund', status: 'in_progress' });
+    const auth = await loginAs(manager.username);
+
+    const res = await inject(url, {
+      method: 'POST',
+      url: `/tickets/${ticket.id}/extend-window`,
+      headers: { authorization: auth },
+      payload: { note: 'Manager approved 60-day extension' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().windowDays).toBe(60);
+
+    const logs = await testDb
+      .select()
+      .from(auditLogs)
+      .where(eq(auditLogs.entityId, ticket.id));
+    expect(logs.some((l) => l.action === 'ticket.window_extended')).toBe(true);
+
+    const events = await testDb
+      .select()
+      .from(ticketEvents)
+      .where(eq(ticketEvents.ticketId, ticket.id));
+    expect(events.some((e) => e.eventType === 'note_added')).toBe(true);
+  });
+
+  it('returns 409 for non-return/refund ticket types', async () => {
+    const customer = await seedUser({ role: 'customer' });
+    const manager = await seedUser({ role: 'manager' });
+    const order = await seedOrder({ customerId: customer.id, status: 'picked_up' });
+    const ticket = await seedTicket({
+      orderId: order.id,
+      customerId: customer.id,
+      type: 'price_adjustment',
+      status: 'open',
+      department: 'front_desk',
+      receiptReference: 'REC-123',
+    });
+    const auth = await loginAs(manager.username);
+
+    const res = await inject(url, {
+      method: 'POST',
+      url: `/tickets/${ticket.id}/extend-window`,
+      headers: { authorization: auth },
+      payload: {},
+    });
+
+    expect(res.statusCode).toBe(409);
   });
 });
 
