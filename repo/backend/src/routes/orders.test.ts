@@ -808,6 +808,79 @@ describe('POST /orders/:id/confirm', () => {
   });
 });
 
+// ── POST /orders/:id/ready ────────────────────────────────────────────────────
+
+describe('POST /orders/:id/ready', () => {
+  it('401: requires authentication', async () => {
+    const res = await inject(url, {
+      method: 'POST',
+      url: '/orders/00000000-0000-0000-0000-000000000001/ready',
+    });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('403: customer role cannot mark ready', async () => {
+    const customer = await seedUser({ username: 'cust_ready403' });
+    const order = await seedOrder({ customerId: customer.id, status: 'confirmed' });
+    const auth = await loginAs(customer.username);
+
+    const res = await inject(url, {
+      method: 'POST',
+      url: `/orders/${order.id}/ready`,
+      headers: authHeader(auth),
+    });
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('404: order not found', async () => {
+    const associate = await seedUser({ username: 'assoc_ready404', role: 'associate' });
+    const auth = await loginAs(associate.username);
+
+    const res = await inject(url, {
+      method: 'POST',
+      url: '/orders/00000000-0000-0000-0000-000000000001/ready',
+      headers: authHeader(auth),
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('409: cannot mark ready from pending status', async () => {
+    const customer = await seedUser({ username: 'cust_readypending' });
+    const associate = await seedUser({ username: 'assoc_readypending', role: 'associate' });
+    const order = await seedOrder({ customerId: customer.id, status: 'pending' });
+    const auth = await loginAs(associate.username);
+
+    const res = await inject(url, {
+      method: 'POST',
+      url: `/orders/${order.id}/ready`,
+      headers: authHeader(auth),
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error).toMatch(/confirmed/i);
+  });
+
+  it('200: confirmed → ready_for_pickup transition + audit log', async () => {
+    const customer = await seedUser({ username: 'cust_readyok' });
+    const associate = await seedUser({ username: 'assoc_readyok', role: 'associate' });
+    const order = await seedOrder({ customerId: customer.id, status: 'confirmed' });
+    const auth = await loginAs(associate.username);
+
+    const res = await inject(url, {
+      method: 'POST',
+      url: `/orders/${order.id}/ready`,
+      headers: authHeader(auth),
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ id: order.id, status: 'ready_for_pickup' });
+
+    const dbOrder = await testDb.query.orders.findFirst({ where: eq(orders.id, order.id) });
+    expect(dbOrder!.status).toBe('ready_for_pickup');
+
+    const logs = await testDb.select().from(auditLogs).where(eq(auditLogs.entityId, order.id));
+    expect(logs.some((l) => l.action === 'order.ready_for_pickup')).toBe(true);
+  });
+});
+
 // ── POST /orders/:id/pickup/verify ────────────────────────────────────────────
 
 describe('POST /orders/:id/pickup/verify', () => {

@@ -20,6 +20,8 @@ import moderationRoutes from './routes/moderation';
 import adminBannedTermsRoutes from './routes/admin/banned-terms';
 import adminRulesRoutes from './routes/admin/rules';
 import adminAuditLogsRoutes from './routes/admin/audit-logs';
+import adminUsersRoutes from './routes/admin/users';
+import adminModerationRoutes from './routes/admin/moderation';
 import ticketRoutes from './routes/tickets';
 import associateRoutes from './routes/associate';
 import notificationRoutes from './routes/notifications';
@@ -105,6 +107,12 @@ await app.register(adminRulesRoutes, { prefix: '/admin/rules' });
 
 // Admin — immutable audit log viewer (task 145)
 await app.register(adminAuditLogsRoutes, { prefix: '/admin/audit-logs' });
+
+// Admin — user management (list, role assignment, lockout reset)
+await app.register(adminUsersRoutes, { prefix: '/admin/users' });
+
+// Admin — moderation queue (review approve/reject)
+await app.register(adminModerationRoutes, { prefix: '/admin/moderation' });
 
 // After-sales tickets
 await app.register(ticketRoutes, { prefix: '/tickets' });

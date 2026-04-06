@@ -20,7 +20,7 @@
     "@fastify/cors": "^9.0.1",
     "@fastify/formbody": "^7.4.0",
     "@fastify/multipart": "^8.3.0",
-    "bcrypt": "^5.1.1",
+    "bcryptjs": "^2.4.3",
     "drizzle-orm": "^0.30.10",
     "fastify": "^4.27.0",
     "fastify-plugin": "^5.1.0",
@@ -30,7 +30,7 @@
     "@retail-hub/shared": "workspace:*"
   },
   "devDependencies": {
-    "@types/bcrypt": "^5.0.2",
+    "@types/bcryptjs": "^2.4.6",
     "@types/node": "^20.14.0",
     "@vitest/coverage-v8": "^2.1.0",
     "drizzle-kit": "^0.21.4",

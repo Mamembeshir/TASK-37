@@ -132,7 +132,7 @@ export const routes: Routes = [
       },
       {
         path: 'admin/products',
-        canActivate: [roleGuard('admin', 'manager')],
+        canActivate: [roleGuard('admin')],
         loadComponent: () =>
           import('./features/admin/products/admin-products.component').then(
             (m) => m.AdminProductsComponent,
@@ -159,7 +159,7 @@ export const routes: Routes = [
       },
       {
         path: 'admin/moderation',
-        canActivate: [roleGuard('admin', 'manager')],
+        canActivate: [roleGuard('admin', 'manager', 'supervisor')],
         loadComponent: () =>
           import('./features/admin/moderation/admin-moderation-queue.component').then(
             (m) => m.AdminModerationQueueComponent,
@@ -168,7 +168,7 @@ export const routes: Routes = [
       },
       {
         path: 'admin/audit-log',
-        canActivate: [roleGuard('admin', 'manager')],
+        canActivate: [roleGuard('admin', 'manager', 'supervisor')],
         loadComponent: () =>
           import('./features/admin/audit-log/admin-audit-log.component').then(
             (m) => m.AdminAuditLogComponent,

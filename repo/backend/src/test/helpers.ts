@@ -7,7 +7,7 @@
  *   const product = await seedProduct({ stockQty: 10 });
  */
 
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 import { createHash } from 'node:crypto';
 import { testDb } from './db.js';
 import { users, products } from '../db/schema/index.js';

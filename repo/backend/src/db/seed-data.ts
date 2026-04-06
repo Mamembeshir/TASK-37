@@ -3,7 +3,7 @@
  * Safe to re-run: skips if products already exist.
  */
 
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import postgres from 'postgres';
 import { drizzle } from 'drizzle-orm/postgres-js';

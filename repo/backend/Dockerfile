@@ -1,8 +1,5 @@
 FROM node:20-alpine
 
-# Install build tools needed for native modules (e.g. bcrypt)
-RUN apk add --no-cache python3 make g++
-
 # Install pnpm (pinned to match local version)
 RUN npm install -g pnpm@10
 

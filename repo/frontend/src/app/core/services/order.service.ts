@@ -54,6 +54,10 @@ export class OrderService {
     return this.api.post<ConfirmResponse>(`/orders/${orderId}/confirm`, {});
   }
 
+  markReady(orderId: string): Observable<{ id: string; status: string }> {
+    return this.api.post<{ id: string; status: string }>(`/orders/${orderId}/ready`, {});
+  }
+
   createPickupGroup(orderId: string, department: string): Observable<PickupGroup> {
     return this.api.post<PickupGroup>('/cart/pickup-groups', { orderId, department });
   }

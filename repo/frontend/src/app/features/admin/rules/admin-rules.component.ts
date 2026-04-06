@@ -5,30 +5,32 @@ import type { HttpErrorResponse } from '@angular/common/http';
 import { ApiService } from '../../../core/services/api.service';
 import { ToastService } from '../../../core/services/toast.service';
 
-export type RuleSetStatus = 'draft' | 'published' | 'archived';
+export type RuleSetStatus = 'draft' | 'active' | 'inactive' | 'rolled_back';
 
 export interface RuleSet {
   id: string;
   name: string;
-  description: string | null;
   version: number;
   status: RuleSetStatus;
-  comment: string | null;
+  adminComment: string;
+  createdBy: string;
   publishedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
 
 const STATUS_BADGE: Record<RuleSetStatus, string> = {
-  draft:     'bg-[#c4832a]/10 border border-[#c4832a]/20 text-[#c4832a]',
-  published: 'bg-[#c4832a]/10 border border-[#c4832a]/20 text-[#c4832a]',
-  archived:  'bg-zinc-500/10 border border-zinc-500/20 text-zinc-700',
+  draft:        'bg-[#c4832a]/10 border border-[#c4832a]/20 text-[#c4832a]',
+  active:       'bg-[#c4832a]/10 border border-[#c4832a]/20 text-[#c4832a]',
+  inactive:     'bg-zinc-500/10 border border-zinc-500/20 text-zinc-700',
+  rolled_back:  'bg-zinc-500/10 border border-zinc-500/20 text-zinc-700',
 };
 
 const STATUS_LABEL: Record<RuleSetStatus, string> = {
-  draft:     'Draft',
-  published: 'Published',
-  archived:  'Archived',
+  draft:       'Draft',
+  active:      'Active',
+  inactive:    'Inactive',
+  rolled_back: 'Rolled Back',
 };
 
 @Component({
@@ -139,14 +141,12 @@ const STATUS_LABEL: Record<RuleSetStatus, string> = {
                     {{ statusLabel(r.status) }}
                   </span>
                 </div>
-                @if (r.description) {
-                  <p class="text-xs text-zinc-700 mt-1 truncate">{{ r.description }}</p>
-                }
+
                 @if (r.publishedAt) {
                   <p class="text-xs text-zinc-800 mt-1">
                     Published {{ formatDate(r.publishedAt) }}
-                    @if (r.comment) {
-                      · <span class="italic text-zinc-700">"{{ r.comment }}"</span>
+                    @if (r.adminComment) {
+                      · <span class="italic text-zinc-700">"{{ r.adminComment }}"</span>
                     }
                   </p>
                 }
@@ -167,7 +167,7 @@ const STATUS_LABEL: Record<RuleSetStatus, string> = {
                     Publish
                   </button>
                 }
-                @if (r.status === 'published' && r.version > 1) {
+                @if (r.status === 'active' && r.version > 1) {
                   <button type="button"
                           class="py-1.5 px-4 text-xs font-semibold rounded-xl
                                  bg-[#c4832a]/10 border border-[#c4832a]/20 text-[#c4832a]
@@ -243,7 +243,8 @@ export class AdminRulesComponent implements OnInit {
       : `/admin/rules/${r.id}/rollback`;
 
     try {
-      await firstValueFrom(this.api.post(endpoint, { comment: this.modalComment.trim() }));
+      const body = this.modalAction() === 'rollback' ? { adminComment: this.modalComment.trim() } : undefined;
+      await firstValueFrom(this.api.post(endpoint, body));
       this.toast.success(
         this.modalAction() === 'publish'
           ? `"${r.name}" published`
@@ -263,8 +264,8 @@ export class AdminRulesComponent implements OnInit {
   private async load(): Promise<void> {
     this.loading.set(true);
     try {
-      const res = await firstValueFrom(this.api.get<RuleSet[]>('/admin/rules'));
-      this.ruleSets.set(res);
+      const res = await firstValueFrom(this.api.get<{ data: RuleSet[]; total: number; limit: number; offset: number }>('/admin/rules'));
+      this.ruleSets.set(res.data);
     } catch {
       this.ruleSets.set([]);
     } finally {

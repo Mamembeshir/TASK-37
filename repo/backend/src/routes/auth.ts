@@ -3,7 +3,7 @@ import { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { randomBytes } from 'crypto';
 import { hashToken } from '../lib/session';
 import { eq, sql, and, gt } from 'drizzle-orm';
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 import { z, passwordSchema } from '../lib/zod';
 import { users } from '../db/schema/users';
 import { sessions } from '../db/schema/sessions';

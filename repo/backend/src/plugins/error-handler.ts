@@ -22,8 +22,7 @@ async function errorHandlerPlugin(app: FastifyInstance) {
     try {
       await app.db.insert(auditLogs).values({
         id: randomUUID(),
-        // actorId comes from session decoration added in task 37; null for now
-        actorId: (request as any).session?.userId ?? null,
+        actorId: request.user?.id ?? null,
         action: 'request.error',
         entityType: 'http_request',
         entityId: randomUUID(),

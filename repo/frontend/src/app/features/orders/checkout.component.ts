@@ -206,6 +206,28 @@ import { ORDER_STATUS_LABEL, ORDER_STATUS_BADGE } from '../../core/models/order.
           </button>
         }
 
+        <!-- - Mark ready for pickup - -->
+        @if (order()!.status === 'confirmed') {
+          <button type="button"
+            class="btn-primary w-full py-3 text-sm flex items-center justify-center gap-2
+                   disabled:opacity-40 disabled:cursor-not-allowed disabled:transform-none disabled:shadow-none"
+            [disabled]="markingReady()"
+            (click)="markReady()">
+            @if (markingReady()) {
+              <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+              </svg>
+              Marking ready...
+            } @else {
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+              </svg>
+              Mark Ready for Pickup
+            }
+          </button>
+        }
+
         <!-- - Pickup group editor - -->
         <div class="card p-5">
           <app-pickup-group-editor [order]="order()!" (changed)="reloadOrder()" />
@@ -220,11 +242,12 @@ export class CheckoutComponent implements OnInit {
   private readonly orderSvc = inject(OrderService);
   private readonly toast    = inject(ToastService);
 
-  readonly loading    = signal(true);
-  readonly order      = signal<OrderDetail | null>(null);
-  readonly error      = signal<string | null>(null);
+  readonly loading      = signal(true);
+  readonly order        = signal<OrderDetail | null>(null);
+  readonly error        = signal<string | null>(null);
   readonly addingTender = signal(false);
   readonly confirming   = signal(false);
+  readonly markingReady = signal(false);
   readonly tenderError  = signal<string | null>(null);
 
   protected readonly Math = Math;
@@ -339,6 +362,22 @@ export class CheckoutComponent implements OnInit {
       this.toast.error(msg);
     } finally {
       this.confirming.set(false);
+    }
+  }
+
+  async markReady(): Promise<void> {
+    if (this.markingReady()) return;
+    this.markingReady.set(true);
+    try {
+      await firstValueFrom(this.orderSvc.markReady(this.order()!.id));
+      this.toast.success('Order marked as ready for pickup');
+      await this.reloadOrder();
+    } catch (err: unknown) {
+      const e = err as HttpErrorResponse;
+      const msg: string = (e.error as { error?: string })?.error ?? 'Could not mark order as ready';
+      this.toast.error(msg);
+    } finally {
+      this.markingReady.set(false);
     }
   }
 

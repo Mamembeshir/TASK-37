@@ -26,6 +26,8 @@ import orderRoutes from '../routes/orders.js';
 import reviewRoutes from '../routes/reviews.js';
 import moderationRoutes from '../routes/moderation.js';
 import adminRulesRoutes from '../routes/admin/rules.js';
+import adminUsersRoutes from '../routes/admin/users.js';
+import adminModerationRoutes from '../routes/admin/moderation.js';
 import { testDb } from './db.js';
 import type { db } from '../db/index.js';
 
@@ -162,6 +164,48 @@ export async function buildModerationTestApp(): Promise<{ app: FastifyInstance; 
   await app.register(requireAuth);
   await app.register(authRoutes, { prefix: '/auth' });
   await app.register(moderationRoutes, { prefix: '/moderation' });
+
+  await app.ready();
+  await app.listen({ port: 0, host: '127.0.0.1' });
+  const { port } = app.server.address() as AddressInfo;
+  return { app, url: `http://127.0.0.1:${port}` };
+}
+
+/**
+ * Build a test app with auth + admin users routes.
+ * Auth: admin role only.
+ */
+export async function buildAdminUsersTestApp(): Promise<{ app: FastifyInstance; url: string }> {
+  const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
+
+  app.decorate('db', testDb as unknown as typeof db);
+
+  await app.register(zodValidator);
+  await app.register(errorHandler);
+  await app.register(requireAuth);
+  await app.register(authRoutes, { prefix: '/auth' });
+  await app.register(adminUsersRoutes, { prefix: '/admin/users' });
+
+  await app.ready();
+  await app.listen({ port: 0, host: '127.0.0.1' });
+  const { port } = app.server.address() as AddressInfo;
+  return { app, url: `http://127.0.0.1:${port}` };
+}
+
+/**
+ * Build a test app with auth + admin moderation routes.
+ * Auth: supervisor, manager, or admin.
+ */
+export async function buildAdminModerationTestApp(): Promise<{ app: FastifyInstance; url: string }> {
+  const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
+
+  app.decorate('db', testDb as unknown as typeof db);
+
+  await app.register(zodValidator);
+  await app.register(errorHandler);
+  await app.register(requireAuth);
+  await app.register(authRoutes, { prefix: '/auth' });
+  await app.register(adminModerationRoutes, { prefix: '/admin/moderation' });
 
   await app.ready();
   await app.listen({ port: 0, host: '127.0.0.1' });

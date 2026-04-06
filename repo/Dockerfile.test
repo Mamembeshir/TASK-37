@@ -1,20 +1,22 @@
+# syntax=docker/dockerfile:1
 FROM node:20-alpine
-
-# Native modules (bcrypt) need build tools
-RUN apk add --no-cache python3 make g++
 
 # Install pnpm (pinned to match workspace)
 RUN npm install -g pnpm@10
 
 WORKDIR /app
 
-# Copy manifests first for layer caching
-COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
+# Copy .npmrc first so network retry/concurrency settings apply during install
+COPY .npmrc pnpm-workspace.yaml package.json pnpm-lock.yaml ./
 COPY backend/package.json  ./backend/
 COPY frontend/package.json ./frontend/
 COPY shared/package.json   ./shared/
 
-RUN pnpm install --frozen-lockfile
+# Cache the pnpm content-addressable store across builds so packages are not
+# re-downloaded when only source files change.  The mount is invisible to the
+# final image layer (no size bloat).
+RUN --mount=type=cache,id=pnpm-store,target=/root/.local/share/pnpm/store \
+    pnpm install --frozen-lockfile
 
 # Copy full source (root tsconfig.json must be present — backend extends it)
 COPY tsconfig.json       ./

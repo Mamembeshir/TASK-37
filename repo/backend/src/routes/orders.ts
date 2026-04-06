@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { and, count, desc, eq, isNull, sql } from 'drizzle-orm';
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 import { z, paginationQuery, uuidParam } from '../lib/zod';
 import { carts, cartItems } from '../db/schema/carts';
 import { products } from '../db/schema/products';
@@ -691,6 +691,65 @@ async function orderRoutes(fastify: FastifyInstance) {
         orderTotalCents,
         tenderTotalCents,
       });
+    },
+  );
+
+  /**
+   * POST /orders/:id/ready
+   *
+   * Mark a confirmed order as ready for customer pickup (staff only).
+   * Transition: confirmed → ready_for_pickup.
+   * Called once all items have been staged at the pickup counter.
+   */
+  app.post(
+    '/:id/ready',
+    {
+      preHandler: [
+        app.requireAuth,
+        app.requireRole('associate', 'supervisor', 'manager', 'admin'),
+      ],
+      schema: {
+        params: uuidParam,
+        response: {
+          200: z.object({
+            id: z.string().uuid(),
+            status: z.literal('ready_for_pickup'),
+          }),
+        },
+      },
+    },
+    async (req, reply) => {
+      const { id: orderId } = req.params;
+
+      const [order] = await app.db
+        .select({ id: orders.id, status: orders.status })
+        .from(orders)
+        .where(eq(orders.id, orderId))
+        .limit(1);
+
+      if (!order) {
+        return sendError(reply, 404, 'Order not found.');
+      }
+
+      if (order.status !== 'confirmed') {
+        return sendError(reply, 409, `Order can only be marked ready from 'confirmed' status (current: '${order.status}').`);
+      }
+
+      await app.db
+        .update(orders)
+        .set({ status: 'ready_for_pickup', updatedAt: new Date() })
+        .where(eq(orders.id, orderId));
+
+      await app.db.insert(auditLogs).values({
+        actorId: req.user!.id,
+        action: 'order.ready_for_pickup',
+        entityType: 'order',
+        entityId: orderId,
+        before: { status: 'confirmed' },
+        after: { status: 'ready_for_pickup' },
+      });
+
+      return reply.send({ id: orderId, status: 'ready_for_pickup' as const });
     },
   );
 

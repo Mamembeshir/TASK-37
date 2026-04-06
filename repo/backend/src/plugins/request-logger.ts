@@ -22,7 +22,7 @@ async function requestLoggerPlugin(app: FastifyInstance) {
     try {
       await app.db.insert(auditLogs).values({
         id: randomUUID(),
-        actorId: (request as any).session?.userId ?? null,
+        actorId: request.user?.id ?? null,
         action: `http.${request.method.toLowerCase()}`,
         entityType: 'http_request',
         entityId: randomUUID(),

@@ -6,7 +6,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createHash } from 'node:crypto';
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 import { eq } from 'drizzle-orm';
 import { collapsePickupGroups, generateUniquePickupCode } from './pickup.js';
 import { testDb, runMigrations, clearAllTables, closeDb } from '../test/db.js';

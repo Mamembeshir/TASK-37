@@ -14,7 +14,6 @@ export interface AuditLog {
   action: string;
   before: unknown;
   after: unknown;
-  note: string | null;
   createdAt: string;
 }
 
@@ -151,7 +150,7 @@ function diffLines(val: unknown): string[] {
                       <span class="text-xs text-zinc-700 font-medium">{{ log.action }}</span>
                     </td>
                     <td class="px-4 py-3 text-xs text-zinc-700 max-w-xs truncate">
-                      {{ log.note ?? '—' }}
+                      —
                     </td>
                     <td class="px-4 py-3">
                       @if (hasDiff(log)) {
@@ -296,10 +295,10 @@ export class AdminAuditLogComponent implements OnInit {
         limit: PAGE_SIZE,
         offset: this.offset(),
       };
-      if (this.filterEntity()) params['entityType']  = this.filterEntity();
-      if (this.filterActor())  params['actor']        = this.filterActor();
-      if (this.filterFrom())   params['from']         = this.filterFrom();
-      if (this.filterTo())     params['to']           = this.filterTo();
+      if (this.filterEntity()) params['entityType'] = this.filterEntity();
+      if (this.filterActor())  params['actor']      = this.filterActor();
+      if (this.filterFrom())   params['from']       = `${this.filterFrom()}T00:00:00.000Z`;
+      if (this.filterTo())     params['to']         = `${this.filterTo()}T23:59:59.999Z`;
 
       const res = await firstValueFrom(
         this.api.get<AuditLogListResponse>('/admin/audit-logs', params)

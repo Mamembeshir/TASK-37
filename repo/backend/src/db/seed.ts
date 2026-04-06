@@ -4,7 +4,7 @@
  * Safe to re-run: skips any username that already exists.
  */
 
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 import postgres from 'postgres';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { users } from './schema/index.js';
